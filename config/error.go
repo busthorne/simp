@@ -52,21 +52,25 @@ func (ve *ValidationError) Error() string {
 	return s.String()
 }
 
-func validate(title string) (*ValidationError, func(err error, title string)) {
+func validate(title string) (*ValidationError, func(err error, title ...string)) {
 	ve := &ValidationError{Title: title}
-	return ve, func(err error, title string) {
+	return ve, func(err error, title ...string) {
 		if err == nil {
 			return
 		}
+		t := ""
+		if len(title) > 0 {
+			t = title[0]
+		}
 		if err, ok := err.(*ValidationError); ok {
 			ve.Errors = append(ve.Errors, &ValidationError{
-				Title:  title,
+				Title:  t,
 				Errors: err.Errors,
 			})
 			return
 		}
 		ve.Errors = append(ve.Errors, &ValidationError{
-			Title:  title,
+			Title:  t,
 			Errors: []error{err},
 		})
 	}

@@ -1,6 +1,9 @@
 package config
 
 import (
+	"slices"
+
+	"github.com/busthorne/keyring"
 	"github.com/hashicorp/hcl/v2"
 )
 
@@ -13,6 +16,17 @@ type Config struct {
 	Providers []Provider `hcl:"provider,block"`
 
 	Diagnostics map[string]hcl.Diagnostics
+}
+
+func (c *Config) LookupModel(alias string) (m Model, ok bool) {
+	for _, p := range c.Providers {
+		for _, m := range p.Models {
+			if m.Name == alias || slices.Contains(m.Alias, alias) {
+				return m, true
+			}
+		}
+	}
+	return
 }
 
 type Default struct {
@@ -60,9 +74,10 @@ type HistoryPath struct {
 // the API keys, and `cloudflare` will provide SSO and RBAC for
 // simpd.
 type Auth struct {
-	Type    string `hcl:"type,label"`
-	Name    string `hcl:"name,label"`
-	Backend string `hcl:"backend"`
+	Type string `hcl:"type,label"`
+	Name string `hcl:"name,label"`
+
+	Backend keyring.BackendType `hcl:"backend"`
 }
 
 // Provider is a provider of LLM services, such as OpenAI, Anthropic, etc.

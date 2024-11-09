@@ -5,181 +5,206 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
+	"github.com/busthorne/keyring"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
-	"github.com/spewerspew/spew"
+	"github.com/busthorne/simp/driver"
 )
 
 type wizardState struct {
-	reader        *bufio.Reader
-	configPath    string
-	useKeyring    bool
-	providers     []providerConfig
-	setupDaemon   bool
-	setupHistory  bool
-	annotateHist  bool
-	historyPath   string
-	daemonConfig  *config.Daemon
-	historyConfig *config.History
-}
-
-type providerConfig struct {
-	driver  string
-	name    string
-	baseURL string
-	apiKey  string
-	models  []config.Model
+	config.Config
+	reader     *bufio.Reader
+	configPath string
 }
 
 func wizard() {
-	state := &wizardState{
+	w := &wizardState{
 		reader:     bufio.NewReader(os.Stdin),
 		configPath: path.Join(simp.Path, "config"),
 	}
-	if notEmpty(state.configPath) {
-		if !state.confirm("Config directory already exists. This will erase existing config. Continue?") {
-			return
-		}
-		os.RemoveAll(state.configPath)
-	} else {
-		os.MkdirAll(simp.Path, 0755)
-		os.MkdirAll(state.configPath, 0755)
-	}
-
-	// Auth setup
-	fmt.Println("\nHow would you like to store API keys?")
-	fmt.Println("1. System keyring (recommended)")
-	fmt.Println("2. Plaintext in config")
-	choice := state.prompt("Enter choice [1]:", "1")
-	state.useKeyring = choice == "1"
-
-	const openaiBaseURL = "https://api.openai.com/v1"
-	// Provider setup
+	// first, ask them where they want the config to go
 	for {
-		fmt.Println("\nAvailable providers:")
-		fmt.Println("1. OpenAI")
-		fmt.Println("2. Anthropic")
-		fmt.Println("x. Done")
-
-		choice = state.prompt("Select provider to configure [x]:", "")
-		if choice == "" || choice == "x" {
+		p := expandPath(w.prompt("Will configure in [$SIMPPATH/config]:", w.configPath))
+		if p != "" {
+			w.configPath = p
 			break
 		}
-
-		var p providerConfig
-		switch choice {
-		case "1":
-			p.driver = "openai"
-			p.baseURL = state.prompt("Base URL:", openaiBaseURL)
-			if p.baseURL != openaiBaseURL {
-				p.name = state.prompt("Provider name:", "")
+	}
+	if alreadyExists(w.configPath) {
+		if !w.confirm("%s already exists. ERASE?", w.configPath) {
+			w.abort()
+		}
+		os.RemoveAll(w.configPath)
+	} else {
+		os.MkdirAll(simp.Path, 0755)
+		os.MkdirAll(w.configPath, 0755)
+		if !alreadyExists(w.configPath) {
+			fmt.Println("Failed to create config directory:", w.configPath)
+			w.abort()
+		}
+	}
+	// daemon setup
+	if w.confirm("\nWould you like to set up the daemon?") {
+		const defaultAddr = "localhost:51015"
+		var listenAddr string
+		for {
+			listenAddr = w.prompt("Listen address ["+defaultAddr+"]:", defaultAddr)
+			switch spl := strings.Split(listenAddr, ":"); len(spl) {
+			case 2:
+			default:
+				fmt.Println("Invalid listen address")
+				continue
 			}
-		case "2":
-			p.driver = "anthropic"
+			break
+		}
+		w.Daemon = &config.Daemon{
+			ListenAddr: listenAddr,
+		}
+	}
+	// then, ask them how they want their keys
+	w.configureKeyring()
+	// setup providers
+	fmt.Println()
+	fmt.Println("Let's configure some inference providers. Use openai for compatible apis.")
+	for {
+		fmt.Println("Available drivers:", strings.Join(driver.Drivers, ", "))
+		fmt.Println("Enter x to quit.")
+		driverName := w.prompt("Select driver, or quit [x]:", "")
+
+		var p config.Provider
+		switch driverName {
+		case "openai":
+			p = w.configureOpenAI()
+		case "anthropic":
+			p = w.configureAnthropic()
+		case "dify":
+			fmt.Println("TBA.")
+			continue
+		case "x", "done", "quit":
+			goto provided
 		default:
+			fmt.Println("Unsupported driver:", driverName)
 			continue
 		}
-
-		if state.useKeyring {
-			p.apiKey = state.prompt("API Key (will be stored in system keyring):", "")
-		} else {
-			p.apiKey = state.prompt("API Key:", "")
+		ring, err := w.keyring(p)
+		if err != nil {
+			fmt.Println("Failed to open keyring:", err)
+			w.abort()
 		}
-
-		// Model aliases
-		if state.confirm("\nWould you like to configure model aliases?") {
-			switch p.driver {
-			case "openai":
-				if p.baseURL == "https://api.openai.com/v1" {
-					alias := state.prompt("Alias for gpt-4o [4o]:", "4o")
-					p.models = append(p.models, config.Model{
-						Name:  "gpt-4o",
-						Alias: []string{alias},
-					})
-				}
-			case "anthropic":
-				alias := state.prompt("Alias for claude-3-5-sonnet-latest [sonnet]:", "sonnet")
-				p.models = append(p.models, config.Model{
-					Name:   "claude-3-5-sonnet-latest",
-					Alias:  []string{alias},
-					Latest: true,
-				})
-			}
+		err = ring.Set(keyring.Item{Key: "apikey", Data: []byte(p.APIKey)})
+		if err != nil {
+			fmt.Println("Failed to save to keychain:", err)
+			w.abort()
 		}
-
-		state.providers = append(state.providers, p)
+		w.Providers = append(w.Providers, p)
 	}
+provided:
+	w.printProviders()
 
-	// Daemon setup
-	if state.confirm("\nWould you like to set up the daemon?") {
-		state.setupDaemon = true
-		state.daemonConfig = &config.Daemon{
-			ListenAddr: state.prompt("Listen address [127.0.0.1:51015]:", "127.0.0.1:51015"),
-			AutoTLS:    state.confirm("Enable automatic TLS? [n]:"),
+	// histories, & annotations thereof
+	if w.confirm("\nWould you like to retain conversation histories?") {
+		path := simp.Path + "/history"
+		hp := w.prompt("History location [$SIMPPATH/history]:", path)
+		if hp == path {
+			hp = ""
 		}
-	}
-
-	// History setup
-	if state.confirm("\nWould you like to set up conversation history?") {
-		state.setupHistory = true
-		state.historyPath = state.prompt("History location [$SIMPPATH/history]:", "$SIMPPATH/history")
-		state.historyConfig = &config.History{
-			Location: state.historyPath,
+		model := ""
+		if w.confirm("Would you like to enable filename annotations?") {
+			model = w.prompt("Annotation model or alias:", "")
 		}
-
-		if state.setupDaemon {
-			if state.confirm("Would you like to enable filename annotations?") {
-				state.annotateHist = true
-				state.historyConfig.Annotate = true
-				state.historyConfig.AnnotateWith = "sonnet" // Default to first anthropic model if available
-				for _, p := range state.providers {
-					if p.driver == "anthropic" {
-						for _, m := range p.models {
-							state.historyConfig.AnnotateWith = m.ShortestAlias()
-							break
-						}
-					}
-				}
-			}
+		w.History = &config.History{
+			Location:     hp,
+			AnnotateWith: model,
 		}
 	}
 
 	// Generate and write config
-	if err := state.writeConfig(); err != nil {
-		fmt.Printf("Error writing config: %v\n", err)
-		return
+	if err := w.writeConfig(); err != nil {
+		fmt.Printf("Failed to write config: %v\n", err)
+		w.abort()
 	}
 
 	fmt.Println("\nConfiguration complete! You can now use simp.")
 }
 
-func (w *wizardState) confirm(prompt string) bool {
-	resp := strings.ToLower(w.prompt(prompt+" (y/n):", "n"))
-	return resp == "y" || resp == "yes"
-}
-
-func (w *wizardState) prompt(prompt, defaultVal string) string {
-	fmt.Print(prompt + " ")
-	input, _ := w.reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return defaultVal
+func (w *wizardState) configureKeyring() {
+	fmt.Println("\nHow would you like to store API keys?")
+	fmt.Println("\t- config (not recommended)")
+	backends := map[keyring.BackendType]struct{}{}
+	for _, backend := range keyring.AvailableBackends() {
+		backends[backend] = struct{}{}
+		fmt.Printf("\t- %s\n", backend)
 	}
-	return input
-}
-
-func (w *wizardState) writeConfig() error {
-	if err := os.MkdirAll(w.configPath, 0755); err != nil {
-		return err
+	var backend keyring.BackendType
+	for {
+		backend = keyring.BackendType(w.prompt("Store API keys in:", ""))
+		if backend == "config" {
+			break
+		}
+		if _, ok := backends[backend]; !ok {
+			fmt.Println("Unsupported backend")
+			continue
+		}
+		if w.openKeyring(backend) {
+			break
+		}
 	}
-	spew.Dump(w)
-	return nil
+	if backend == "config" {
+		fmt.Println("Okay, it's your choice.")
+	} else {
+		fmt.Println("Keyring configured.")
+	}
 }
 
-func notEmpty(path string) bool {
-	// check if the path contains files
-	_, err := os.ReadDir(path)
-	return err == nil
+func (w *wizardState) configureOpenAI() (p config.Provider) {
+	const openaiBaseURL = "https://api.openai.com/v1"
+	p.Driver = "openai"
+	p.BaseURL = strings.Trim(w.prompt("Base URL:", openaiBaseURL), "/")
+	if p.BaseURL == openaiBaseURL {
+		p.BaseURL = ""
+	}
+	p.Name = w.prompt("Provider name [default]:", "")
+	if p.Name == "" {
+		p.Name = w.defaultProviderName("openai")
+	}
+	p.APIKey = w.apikey()
+	return
+}
+
+func (w *wizardState) configureAnthropic() (p config.Provider) {
+	p.APIKey = w.apikey()
+	p.Name = w.defaultProviderName("anthropic")
+	return
+}
+
+func (w *wizardState) printProviders() {
+	fmt.Println("Configured providers and models:")
+	for _, p := range w.Providers {
+		fmt.Printf("\t- %s\n", p.Driver, p.Name)
+		for _, m := range p.Models {
+			alias := ""
+			if len(m.Alias) > 0 {
+				alias = fmt.Sprintf(" (%s)", strings.Join(m.Alias, ", "))
+			}
+			fmt.Printf("\t\t%s%s\n", m.Name, alias)
+		}
+	}
+}
+
+func (w *wizardState) defaultProviderName(driver string) string {
+	var name = "api"
+	var j = -1
+	for i, p := range w.Providers {
+		if p.Driver == driver {
+			j = i
+			break
+		}
+	}
+	if j == -1 {
+		name += strconv.Itoa(j + 2)
+	}
+	return name
 }

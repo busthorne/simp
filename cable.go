@@ -15,7 +15,7 @@ var (
 	// captures: whitespace, mark, annotation
 	marx = regexp.MustCompile(`(?m)^([\t ]*)(>{3,}|<{3,})(?: +(\S+))?$`)
 	// captures: png, jpg, jpeg, gif, webp urls
-	imgrx = regexp.MustCompile(`(?m)\bhttps?://\S+\.(?:png|jpg|jpeg|gif|webp)\b`)
+	imgrx = regexp.MustCompile(`https?://\S+\.(?:png|jpg|jpeg|gif|webp)`)
 )
 
 type Message struct {
@@ -29,7 +29,7 @@ type Cable struct {
 	Whitespace string
 }
 
-func (c Cable) AppendUser(s string) {
+func (c *Cable) AppendUser(s string) {
 	c.Thread = append(c.Thread, Message{Role: "user", Content: s})
 }
 
@@ -101,7 +101,6 @@ func ParseCable(s string) (c Cable, err error) {
 		if i < len(marx)-1 {
 			tail = marx[i+1][0]
 		}
-		// Extract content
 		m.Content = trim(s[head:tail])
 		if m.Content == "" {
 			return c, fmt.Errorf("empty message content at mark %d", i)

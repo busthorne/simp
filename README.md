@@ -52,7 +52,7 @@ Chicken crossed the road.
 	>>>
 You can switch models mid-conversation!
 
-	<<< c35s
+	<<< cs35
 Chicken crossed the road a second time.
 ```
 

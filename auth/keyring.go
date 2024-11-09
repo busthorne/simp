@@ -7,17 +7,25 @@ import (
 	"github.com/busthorne/simp/config"
 )
 
+var rings = map[string]keyring.Keyring{}
+
 // NewKeyring opens a keyring for a given provider.
 //
 // The providers are only able to access their own keys, so as not to risk
 // conflicts between providers.
 func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, error) {
-	ring, err := keyring.Open(keyring.Config{
-		AllowedBackends: []keyring.BackendType{keyring.BackendType(auth.Backend)},
-		ServiceName:     "simp_" + auth.Name,
-	})
-	if err != nil {
-		return nil, err
+	id := "simp_" + auth.Name
+	ring, ok := rings[id]
+	if !ok {
+		var err error
+		ring, err = keyring.Open(keyring.Config{
+			AllowedBackends: []keyring.BackendType{keyring.BackendType(auth.Backend)},
+			ServiceName:     "simp_" + auth.Name,
+		})
+		if err != nil {
+			return nil, err
+		}
+		rings[id] = ring
 	}
 	k := &Keyring{ring, ""}
 	if provider != nil {

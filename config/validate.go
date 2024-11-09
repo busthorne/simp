@@ -10,6 +10,7 @@ import (
 
 var (
 	ƒ                  = fmt.Sprintf
+	ø                  = fmt.Errorf
 	nonAlphanumeric    = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 	errNonAlphanumeric = errors.New("does not conform to " +
 		nonAlphanumeric.String())
@@ -22,11 +23,42 @@ func (c *Config) Validate() error {
 	err, collect := validate("")
 	collect(c.Daemon.Validate(), "daemon")
 	collect(c.History.Validate(), "history")
+
+	type count struct{}
+	type duplicates map[string]count
+	auths := duplicates{}
+	providers := duplicates{}
+	models := duplicates{}
+
 	for _, a := range c.Auth {
 		collect(a.Validate(), ƒ(`auth "%s" "%s"`, a.Type, a.Name))
+
+		id := a.Name + ":" + a.Type
+		if _, ok := auths[id]; ok {
+			collect(ø(`duplicate auth "%s" "%s"`, a.Name, a.Type))
+		}
+		auths[id] = count{}
 	}
 	for _, p := range c.Providers {
 		collect(p.Validate(), ƒ(`provider "%s" "%s"`, p.Driver, p.Name))
+
+		id := p.Driver + ":" + p.Name
+		if _, ok := providers[id]; ok {
+			collect(ø(`duplicate provider "%s" "%s"`, p.Driver, p.Name))
+		}
+		providers[id] = count{}
+		for _, m := range p.Models {
+			if _, ok := models[m.Name]; ok {
+				collect(ø("model %s is already in use as name or alias", m.Name))
+			}
+			models[m.Name] = count{}
+			for _, a := range m.Alias {
+				if _, ok := models[a]; ok {
+					collect(ø("model %s is already in use as name or alias", a))
+				}
+				models[a] = count{}
+			}
+		}
 	}
 	err.Title = ƒ("%d errors, 0 warnings", len(err.Errors))
 	return err.Invalid()
@@ -34,7 +66,7 @@ func (c *Config) Validate() error {
 
 func (a *Auth) Validate() error {
 	if nonAlphanumeric.MatchString(a.Name) {
-		return fmt.Errorf("%s: %w", a.Name, errNonAlphanumeric)
+		return ø("%s: %w", a.Name, errNonAlphanumeric)
 	}
 	backends := keyring.AvailableBackends()
 	for _, b := range backends {
@@ -42,14 +74,15 @@ func (a *Auth) Validate() error {
 			return nil
 		}
 	}
-	return fmt.Errorf("available backends: %v", backends)
+	return ø("available backends: %v", backends)
 }
 
 func (p *Provider) Validate() error {
 	if nonAlphanumeric.MatchString(p.Name) {
-		return fmt.Errorf("%s: %w", p.Name, errNonAlphanumeric)
+		return ø("%s: %w", p.Name, errNonAlphanumeric)
 	}
 	err, collect := validate("")
+
 	for _, m := range p.Models {
 		collect(m.Validate(), ƒ(`model "%s" "%s"`, p.Name, m.Name))
 	}
