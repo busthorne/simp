@@ -1,0 +1,103 @@
+default {
+    model = "{{ .Default.Model }}"
+    {{- if .Default.MaxTokens }}
+    max_tokens = {{ .Default.MaxTokens }}
+    {{- end }}
+    {{- if .Default.Temperature }}
+    temperature = {{ .Default.Temperature }}
+    {{- end }}
+    {{- if .Default.TopP }}
+    top_p = {{ .Default.TopP }}
+    {{- end }}
+    {{- if .Default.FrequencyPenalty }}
+    frequency_penalty = {{ .Default.FrequencyPenalty }}
+    {{- end }}
+    {{- if .Default.PresencePenalty }}
+    presence_penalty = {{ .Default.PresencePenalty }}
+    {{- end }}
+}
+
+{{- if .Daemon }}
+daemon {
+    {{- if .Daemon.ListenAddr }}
+    listen_addr = "{{ .Daemon.ListenAddr }}"
+    {{- end }}
+    {{- if .Daemon.AutoTLS }}
+    auto_tls = {{ .Daemon.AutoTLS }}
+    {{- end }}
+    {{- if .Daemon.Keyring }}
+    keyring = "{{ .Daemon.Keyring }}"
+    {{- end }}
+    {{- if .Daemon.AllowedIPs }}
+    allowed_ips = [{{ range $i, $ip := .Daemon.AllowedIPs }}{{if $i}}, {{end}}"{{ $ip }}"{{ end }}]
+    {{- end }}
+}
+{{- end }}
+
+{{- if .Auth }}
+{{- range .Auth }}
+auth "{{ .Type }}" "{{ .Name }}" {
+    backend = "{{ .Backend }}"
+}
+{{- end }}
+{{- end }}
+
+{{- if .Providers }}
+{{- range .Providers }}
+provider "{{ .Driver }}" "{{ .Name }}" {
+    {{- if .BaseURL }}
+    base_url = "{{ .BaseURL }}"
+    {{- end }}
+    {{- if .APIKey }}
+    apikey = "{{ .APIKey }}"
+    {{- end }}
+    {{- if .AllowedIPs }}
+    allowed_ips = [{{ range $i, $ip := .AllowedIPs }}{{if $i}}, {{end}}"{{ $ip }}"{{ end }}]
+    {{- end }}
+    {{- range .Models }}
+    model "{{ .Name }}" {
+        {{- if .Alias }}
+        alias = [{{ range $i, $a := .Alias }}{{if $i}}, {{end}}"{{ $a }}"{{ end }}]
+        {{- end }}
+        {{- if .Tags }}
+        tags = [{{ range $i, $t := .Tags }}{{if $i}}, {{end}}"{{ $t }}"{{ end }}]
+        {{- end }}
+        {{- if .ContextLength }}
+        context_length = {{ .ContextLength }}
+        {{- end }}
+        {{- if .MaxTokens }}
+        max_tokens = {{ .MaxTokens }}
+        {{- end }}
+        {{- if .Latest }}
+        latest = {{ .Latest }}
+        {{- end }}
+        {{- if .Ignore }}
+        ignore = {{ .Ignore }}
+        {{- end }}
+        {{- if .Embedding }}
+        embedding = {{ .Embedding }}
+        {{- end }}
+        {{- if .Images }}
+        images = {{ .Images }}
+        {{- end }}
+    }
+    {{- end }}
+}
+{{- end }}
+{{- end }}
+
+{{- if .History }}
+history {
+    {{- if .History.Location }}
+    location = "{{ .History.Location }}"
+    {{- end }}
+    {{- range .History.Paths }}
+    path "{{ .Path }}" {
+        group = "{{ .Group }}"
+    }
+    {{- end }}
+    {{- if .History.AnnotateWith }}
+    annotate_with = "{{ .History.AnnotateWith }}"
+    {{- end }}
+}
+{{- end }}

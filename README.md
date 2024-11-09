@@ -1,67 +1,142 @@
-# gpt
+# simp
 ```bash
-go install github.com/tucnak/gpt@latest
-export OPENAI_API_KEY=sk-...
-export OPENAI_LOG_DIR=$HOME/gpt # /<time>.gpt.txt on every run
-echo 'Tell a joke.' | gpt -4
+echo 'Tell a joke.' | simp
 ```
 
-This is a simple command-line tool to use GPT-3.5/4 streaming chat completion API with a rudimentary [vim-gpt][1] integration. There is a shorthand mode in which optional arguments are set in a particular order:
+Simp—a **sim**ulating **p**roxy—is a simple tool that provides a single point of consumption for many OpenAI-compatible, but also the incompatible inference backends; it's somehow similar to [llm][0] by Simon Willison but definitely not inspired by it. (Funny: I did the first version of this program the day before Simon did his.) Consider [vim-simp][1] to bring hot agents to your scratch buffers. If you're anything like me, you will love it! There's also `simp -daemon` which is, like, a whole API gateway thing, most notably supporting [Batch API][2] that is to say it keeps state, & absolutely will default to normal endpoints if some provider won't support it.
+
+The tool is designed ergonomically so that you could bring it to shell scripts.
 
 ```bash
-# temperature
-echo 'Tell a joke.' | gpt -4 0.5
-# temperature, max_length
-echo 'Tell a joke.' | gpt -4 0.5 512
-# temperature, max_length, top_p, fpen, ppen
-echo 'Tell a joke.' | gpt -4 0.5 200 1 0 0
+go install github.com/busthorne/simp/cmd/simp@latest
+simp -configure
+echo 'Tell a joke.' | simp
+# gpt-4o [temperature, [max_length, [top_p, [frequency_penalty, [presence_penalty]]]]]
+echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
+
+# optional
+simp -daemon
 ```
 
-Any of those in particular may be set normally:
+## Features
+- [x] Prompt from stdin, complete to stdout
+- [x] Keychains
+- [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format
+- [ ] [Daemon mode](#daemon)
+	- [x] OpenAI-compatible API gateway
+	- [ ] Universal [Batch API][2]
+	- [ ] SSO
+- [x] Interactive mode
+- [x] [Vim mode][1]
+- [x] Setup wizard `-configure`
+- [ ] History
+	- [ ] Group by path
+	- [ ] Annotations
+
+## Cable format
+Simp includes a special-purpose plaintext cable format for chat conversations.
+
+The CLI tool accepts user input via stdin, and it will try to parse it using the cable format. The parser is clever: if the input would appear as cable format, however not well-formed, it will err. Otherwise, it will simply treat the entirety of input as the user message. The image URL's and Markdown image items are treated as images by default.
+
+In Vim mode, `simp` will always terminate output with a trailing prompt marker.
 
 ```
-$ gpt -help
-Usage of gpt:
-  -3	use gpt3.5-turbo
-  -4	use gpt4
-  -fp float
-    	frequency penalty
-  -keyring string
-    	store the password in keyring
-  -max int
-    	max length
-  -p float
-    	top_p sampling (default 1)
-  -pp float
-    	presence penalty
-  -t float
-    	temperature (default 0.7)
-  -vim
-    	vim mode
+You are helpful assistant.
+
+	>>>
+Tell a joke
+
+	<<< 4o
+Chicken crossed the road.
+
+	>>>
+You can switch models mid-conversation!
+
+	<<< c35s
+Chicken crossed the road a second time.
 ```
 
-### Chat interface
+The idea is that the format is simple enough for it to be used in a notepad application, or shell; because it's not a structured data format, chat completions may be read from stdin and immediately appended to prompt, or concatenated with a buffer of some kind. This also means that the cable format is easy to integrate. Take a look at [vim-simp][1] it's a really simple program all things considered.
 
-Normally, the stdin input is considered a single USER prompt but `gpt` will also attempt to parse a plaintext conversation format. If the file starts with the guidemark immediately, no System prompt is assumed; the conversation is arbitrary-length, and does not have to adhere to some order. In Vim mode, it will also append an extra prompt marker.
+All your conversations are just plaintext files that you can [ripgrep][3] and [fzf][4] over.
 
+### Configuration
+Simp tools will use `$SIMPPATH` that is set to `$HOME/.simp` by default. The CLI tool will function with or without a daemon, however a daemon is beneficial if you care about async features that `simpd` has to offer besides the API gateway; it uses [sqlite-vec][6] for persistence, and that only allows one writer at a time.
+
+For basic use, interactive `simp -configure` is sufficient.
+
+The config files are located in `$SIMPPATH/config` in [HCL][5] format, so Terraform users will find it familiar!
+
+```hcl
+default {
+	model = "4o"
+	temperature = 0.7
+}
+
+daemon {
+	listen_addr = "0.0.0.0:51015"
+	allowed_ips = ["10.0.0.0/8"]
+}
+
+# use macOS system keychain
+auth "keyring" "default" {
+	backend = "keychain"
+}
+
+provider "openai" "platform" {
+	model "gpt-4o" {
+		alias = ["4o"]
+	}
+	model "o1-preview" {
+		alias = ["o1"]
+		temperature = 1.0
+	}
+}
+provider "anthropic" "console" {
+	model "claude-3-5-sonnet" {
+		alias = ["cs35"]
+		latest = true
+	}
+	model "claude-3-5-haiku" {
+		alias = ["ch35"]
+		latest = true
+	}
+}
+provider "openai" "llama-cpp-python" {
+	base_url = "http://localhost:8000/v1"
+	model "gemma-2-9b-simpo" {
+		alias = ["g9s"]
+		tags = ["q4_0", "q8_0"] # the first tag is the default
+		context_length = 8192
+		max_tokens = 4096
+	}
+	model "gemma-2-27b-it" {
+		alias = ["g27"]
+		tags = ["q4_0"]
+		context_length = 8192
+		max_tokens = 4096
+	}
+}
+
+history {
+	# group histories from all projects by project name
+	path "~/projects/*/**" {
+		group = "*"
+	}
+	annotate_with = "cs35"
+}
 ```
-System prompt here.
 
-	>>>>>>
-User prompt here.
+## Daemon
+TBA
 
-	<<<<<<
-Assistant continuation continuation here.
-```
-
-### Environment
-
-By default, it will use `OPENAI_API_KEY` environment variable but there's also GNOME Keyring (Keychain on macOS) support that it reverts to, in case the api key wasn't set.
-
-This program will make a record of every API run as individual file in the directory specified by `OPENAI_LOG_DIR` environment variable using a plaintext chat-oriented format that is used by [vim-gpt][1] to easily differentiate between turns.
-
-### License
-
+## License
 MIT
 
-[1]: https://github.com/tucnak/vim-gpt
+[0]: https://github.com/simonw/llm
+[1]: https://github.com/busthorne/vim-simp
+[2]: https://platform.openai.com/docs/guides/batch
+[3]: https://github.com/BurntSushi/ripgrep
+[4]: https://github.com/junegunn/fzf
+[5]: https://github.com/hashicorp/hcl
+[6]: https://alexgarcia.xyz/sqlite-vec/go.html
