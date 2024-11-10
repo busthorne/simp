@@ -10,10 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
-	"github.com/busthorne/simp/driver"
 )
 
 var (
@@ -37,8 +35,6 @@ var (
 )
 
 func setup() {
-	simp.Drivers["anthropic"] = driver.NewAnthropic(option.WithAPIKey(os.Getenv("ANTHROPIC")))
-
 	p := path.Join(simp.Path, "config")
 	c, err := config.ParsePath(p)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/busthorne/simp/driver"
@@ -16,12 +17,18 @@ func gateway() {
 	f := fiber.New()
 	f.Use(cors.New())
 	v1 := f.Group("/v1")
+	v1.Get("/ping", func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+	v1.Get("/models", func(c *fiber.Ctx) error {
+		return c.JSON(driver.Drivers)
+	})
 	v1.Post("/embeddings", func(c *fiber.Ctx) error {
 		var req openai.EmbeddingRequest
 		if err := c.BodyParser(&req); err != nil {
 			return badRequest(c, err)
 		}
-		drv, model, err := driver.ProvideModel(string(req.Model))
+		drv, model, err := findWaldo(string(req.Model))
 		if err != nil {
 			return badRequest(c, err)
 		}
@@ -37,7 +44,7 @@ func gateway() {
 		if err := c.BodyParser(&req); err != nil {
 			return badRequest(c, err)
 		}
-		drv, model, err := driver.ProvideModel(req.Model)
+		drv, model, err := findWaldo(req.Model)
 		if err != nil {
 			return badRequest(c, err)
 		}
@@ -100,7 +107,17 @@ func gateway() {
 	v1.Post("/batches/:id/cancel", func(c *fiber.Ctx) error {
 		return badRequest(c, "not implemented")
 	})
-	f.Listen(cfg.Daemon.ListenAddr)
+	addr := strings.Split(cfg.Daemon.ListenAddr, "://")
+	switch addr[0] {
+	case "http":
+		f.Listen(addr[1])
+	case "https":
+		fmt.Println("HTTPS is not supported yet.")
+		exit(1)
+	default:
+		fmt.Printf("unknown protocol: %s\n", addr[0])
+		exit(1)
+	}
 }
 
 func badRequest(c *fiber.Ctx, err any) error {

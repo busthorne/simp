@@ -18,9 +18,6 @@ type Driver interface {
 }
 
 var (
-	// Drivers is how we reference drivers by name.
-	Drivers = map[string]Driver{}
-
 	// Path is $SIMPPATH defaulting to $HOME/.simp
 	Path string
 
@@ -30,6 +27,8 @@ var (
 	ErrUnsupportedMime = errors.New("unsupported mime type")
 	// ErrUnsupportedRole is returned when role is neither "user" nor "assistant".
 	ErrUnsupportedRole = errors.New("unsupported role")
+	// ErrNotFound is returned when a model or alias is not found.
+	ErrNotFound = errors.New("model or alias not found")
 )
 
 func init() {

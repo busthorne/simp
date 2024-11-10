@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/busthorne/simp"
-	"github.com/busthorne/simp/driver"
 )
 
 func cabling(prompt string) error {
@@ -50,7 +49,7 @@ func promptComplete() error {
 		return fmt.Errorf("bad cable: %v", err)
 	}
 	ws = cable.Whitespace
-	drv, model, err := driver.ProvideModel(model)
+	drv, model, err := findWaldo(model)
 	if err != nil {
 		return err
 	}

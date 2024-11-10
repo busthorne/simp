@@ -50,12 +50,15 @@ func wizard() {
 	}
 	// daemon setup
 	if w.confirm("Would you like to set up the daemon?") {
-		const defaultAddr = "localhost:51015"
+		const defaultAddr = "http://localhost:51015"
 		var listenAddr string
 		for {
-			listenAddr = w.prompt("Listen address ["+defaultAddr+"]", defaultAddr)
-			switch spl := strings.Split(listenAddr, ":"); len(spl) {
-			case 2:
+			listenAddr = w.prompt("Listen address", defaultAddr)
+			switch spl := strings.Split(listenAddr, "://"); spl[0] {
+			case "http":
+			case "https":
+				fmt.Println("HTTPS is not supported yet.")
+				w.abort()
 			default:
 				fmt.Println("Invalid listen address")
 				continue
@@ -65,17 +68,25 @@ func wizard() {
 		w.Daemon = &config.Daemon{
 			ListenAddr: listenAddr,
 		}
+	} else if w.confirm("Would you like to use the existing daemon on your network?") {
+		w.Daemon = &config.Daemon{
+			DaemonAddr: w.prompt("Daemon address", ""),
+		}
 	}
 	// then, ask them how they want their keys
 	w.configureKeyring()
 	// setup providers
 	fmt.Println()
-	fmt.Println("Now, let's configure inference providers. (Note: you may use openai driver for compatible apis.)")
+	fmt.Println("Now, let's configure inference providers; use appropriate drivers for compatible apis.")
 	for {
 	configure:
 		fmt.Println()
 		fmt.Println("Available drivers:", strings.Join(driver.Drivers, ", "))
-		driverName := w.prompt("Select driver [leave blank to continue]", "")
+		blank := ""
+		if len(w.Providers) > 0 {
+			blank = " [leave blank to continue]"
+		}
+		driverName := w.prompt("Select driver"+blank, "")
 
 		var p config.Provider
 		switch driverName {
@@ -211,6 +222,7 @@ func (w *wizardState) configureOpenAI() (p config.Provider) {
 }
 
 func (w *wizardState) configureAnthropic() (p config.Provider) {
+	p.Driver = "anthropic"
 	p.APIKey = w.apikey()
 	p.Name = w.defaultProviderName("anthropic")
 	return

@@ -45,7 +45,14 @@ func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (c *simp.Compl
 			for {
 				r, err := s.Recv()
 				if err != nil {
-					// TODO: handle error by producing tail-chunk
+					c.Err = err
+					// Send error as final message
+					c.Stream <- openai.ChatCompletionStreamResponse{
+						Choices: []openai.ChatCompletionStreamChoice{{
+							FinishReason: "error",
+						}},
+					}
+					return
 				}
 				c.Stream <- r
 			}

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/busthorne/keyring"
 	"github.com/hashicorp/hcl/v2"
@@ -18,11 +20,18 @@ type Config struct {
 	Diagnostics map[string]hcl.Diagnostics
 }
 
-func (c *Config) LookupModel(alias string) (m Model, ok bool) {
+func (c *Config) LookupModel(alias string) (m Model, p Provider, ok bool) {
+	if suffix := "latest"; strings.HasSuffix(alias, suffix) {
+		alias = strings.TrimSuffix(alias, suffix)
+	}
 	for _, p := range c.Providers {
 		for _, m := range p.Models {
 			if m.Name == alias || slices.Contains(m.Alias, alias) {
-				return m, true
+				// TODO: extra setup needed at model lists
+				if m.Latest {
+					m.Name = m.Name + "-latest"
+				}
+				return m, p, true
 			}
 		}
 	}
@@ -51,6 +60,14 @@ type Daemon struct {
 	AutoTLS    bool     `hcl:"auto_tls,optional"`
 	Keyring    string   `hcl:"keyring,optional"`
 	AllowedIPs []string `hcl:"allowed_ips,optional"`
+}
+
+func (d Daemon) BaseURL() string {
+	addr := d.ListenAddr
+	if addr == "" {
+		addr = d.DaemonAddr
+	}
+	return fmt.Sprintf("%s/v1", addr)
 }
 
 // History is the past conversations remembered by either simp, or simpd.
@@ -113,6 +130,7 @@ type Provider struct {
 	Name       string   `hcl:"name,label"`
 	BaseURL    string   `hcl:"base_url,optional"`
 	APIKey     string   `hcl:"apikey,optional"`
+	Keyring    string   `hcl:"keyring,optional"`
 	Models     []Model  `hcl:"model,block"`
 	AllowedIPs []string `hcl:"allowed_ips,optional"`
 }
