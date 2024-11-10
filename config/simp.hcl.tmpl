@@ -1,103 +1,104 @@
 default {
-    model = "{{ .Default.Model }}"
-    {{- if .Default.MaxTokens }}
-    max_tokens = {{ .Default.MaxTokens }}
-    {{- end }}
-    {{- if .Default.Temperature }}
-    temperature = {{ .Default.Temperature }}
-    {{- end }}
-    {{- if .Default.TopP }}
-    top_p = {{ .Default.TopP }}
-    {{- end }}
-    {{- if .Default.FrequencyPenalty }}
-    frequency_penalty = {{ .Default.FrequencyPenalty }}
-    {{- end }}
-    {{- if .Default.PresencePenalty }}
-    presence_penalty = {{ .Default.PresencePenalty }}
-    {{- end }}
+	model = "{{ .Default.Model }}"
+	# max_tokens =
+	# temperature =
+	# top_p =
+	# frequency_penalty =
+	# presence_penalty =
 }
 
-{{- if .Daemon }}
+{{ if .Daemon }}
 daemon {
-    {{- if .Daemon.ListenAddr }}
-    listen_addr = "{{ .Daemon.ListenAddr }}"
-    {{- end }}
-    {{- if .Daemon.AutoTLS }}
-    auto_tls = {{ .Daemon.AutoTLS }}
-    {{- end }}
-    {{- if .Daemon.Keyring }}
-    keyring = "{{ .Daemon.Keyring }}"
-    {{- end }}
-    {{- if .Daemon.AllowedIPs }}
-    allowed_ips = [{{ range $i, $ip := .Daemon.AllowedIPs }}{{if $i}}, {{end}}"{{ $ip }}"{{ end }}]
-    {{- end }}
+	{{- if .Daemon.DaemonAddr }}
+	daemon_addr = "{{ .Daemon.DaemonAddr }}"
+	{{- end }}
+	{{- if .Daemon.ListenAddr }}
+	listen_addr = "{{ .Daemon.ListenAddr }}"
+	{{- end }}
+	# allowed_ips = [""]
+	# auto_tls = false
+	# keyring = { keyring to store SSL cert and key }
 }
 {{- end }}
 
-{{- if .Auth }}
+{{ if .Auth }}
 {{- range .Auth }}
 auth "{{ .Type }}" "{{ .Name }}" {
-    backend = "{{ .Backend }}"
+	backend = "{{ .Backend }}"
+	{{- if .KeychainName }}
+	keychain_name = "{{ .KeychainName }}"
+	{{- end }}
+	{{- if .KeychainSynchronizable }}
+	keychain_icloud = {{ .KeychainSynchronizable }}
+	{{- end }}
+	{{- if .FileDir }}
+	file_dir = "{{ .FileDir }}"
+	{{- end }}
+	{{- if .KWalletAppID }}
+	kwallet_app = "{{ .KWalletAppID }}"
+	{{- end }}
+	{{- if .KWalletFolder }}
+	kwallet_dir = "{{ .KWalletFolder }}"
+	{{- end }}
+	{{- if .LibSecretCollectionName }}
+	libsecret_collection = "{{ .LibSecretCollectionName }}"
+	{{- end }}
+	{{- if .PassDir }}
+	pass_dir = "{{ .PassDir }}"
+	{{- end }}
+	{{- if .PassCmd }}
+	pass_cmd = "{{ .PassCmd }}"
+	{{- end }}
 }
 {{- end }}
 {{- end }}
 
-{{- if .Providers }}
+{{ if .Providers }}
 {{- range .Providers }}
 provider "{{ .Driver }}" "{{ .Name }}" {
-    {{- if .BaseURL }}
-    base_url = "{{ .BaseURL }}"
-    {{- end }}
-    {{- if .APIKey }}
-    apikey = "{{ .APIKey }}"
-    {{- end }}
-    {{- if .AllowedIPs }}
-    allowed_ips = [{{ range $i, $ip := .AllowedIPs }}{{if $i}}, {{end}}"{{ $ip }}"{{ end }}]
-    {{- end }}
-    {{- range .Models }}
-    model "{{ .Name }}" {
-        {{- if .Alias }}
-        alias = [{{ range $i, $a := .Alias }}{{if $i}}, {{end}}"{{ $a }}"{{ end }}]
-        {{- end }}
-        {{- if .Tags }}
-        tags = [{{ range $i, $t := .Tags }}{{if $i}}, {{end}}"{{ $t }}"{{ end }}]
-        {{- end }}
-        {{- if .ContextLength }}
-        context_length = {{ .ContextLength }}
-        {{- end }}
-        {{- if .MaxTokens }}
-        max_tokens = {{ .MaxTokens }}
-        {{- end }}
-        {{- if .Latest }}
-        latest = {{ .Latest }}
-        {{- end }}
-        {{- if .Ignore }}
-        ignore = {{ .Ignore }}
-        {{- end }}
-        {{- if .Embedding }}
-        embedding = {{ .Embedding }}
-        {{- end }}
-        {{- if .Images }}
-        images = {{ .Images }}
-        {{- end }}
-    }
-    {{- end }}
+	{{- if .BaseURL }}
+	base_url = "{{ .BaseURL }}"
+	{{- end }}
+	{{- if .APIKey }}
+	apikey = "{{ .APIKey }}"
+	{{- end }}
+	{{- range .Models }}
+	model "{{ .Name }}" {
+		{{- if .Alias }}
+		alias = [{{ range $i, $a := .Alias }}{{if $i}}, {{end}}"{{ $a }}"{{ end }}]
+		{{- end }}
+		{{- if .Tags }}
+		tags = [{{ range $i, $t := .Tags }}{{if $i}}, {{end}}"{{ $t }}"{{ end }}]
+		{{- end }}
+		{{- if .Latest }}
+		latest = {{ .Latest }}
+		{{- end }}
+		{{- if .Embedding }}
+		embedding = {{ .Embedding }}
+		{{- end }}
+	}
+	{{- end }}
 }
-{{- end }}
+{{ end }}
 {{- end }}
 
 {{- if .History }}
 history {
-    {{- if .History.Location }}
-    location = "{{ .History.Location }}"
-    {{- end }}
-    {{- range .History.Paths }}
-    path "{{ .Path }}" {
-        group = "{{ .Group }}"
-    }
-    {{- end }}
-    {{- if .History.AnnotateWith }}
-    annotate_with = "{{ .History.AnnotateWith }}"
-    {{- end }}
+	{{- if .History.Location }}
+	location = "{{ .History.Location }}"
+	{{- end }}
+	{{- range .History.Paths }}
+	path "{{ .Path }}" {
+		{{- if .Group }}
+		group = "{{ .Group }}"
+		{{- end }}
+		{{- if .Ignore }}
+		ignore = {{ .Ignore }}
+		{{- end }}
+	}
+	{{- end }}
+	{{- if .History.AnnotateWith }}
+	annotate_with = "{{ .History.AnnotateWith }}"
+	{{- end }}
 }
 {{- end }}

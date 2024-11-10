@@ -11,7 +11,7 @@ import (
 )
 
 func cabling(prompt string) error {
-	if cable.Messages != nil {
+	if !cable.Empty() {
 		cable.AppendUser(prompt)
 		return nil
 	}

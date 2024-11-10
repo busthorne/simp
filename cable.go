@@ -33,6 +33,10 @@ func (c *Cable) AppendUser(s string) {
 	c.Thread = append(c.Thread, Message{Role: "user", Content: s})
 }
 
+func (c Cable) Empty() bool {
+	return len(c.Thread) == 0
+}
+
 func (c Cable) Messages() []openai.ChatCompletionMessage {
 	t := []openai.ChatCompletionMessage{}
 	for _, m := range c.Thread {
@@ -54,6 +58,9 @@ func (c Cable) Messages() []openai.ChatCompletionMessage {
 			})
 		}
 		t = append(t, mm)
+	}
+	if len(t) == 0 {
+		return nil
 	}
 	return t
 }

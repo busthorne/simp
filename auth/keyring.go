@@ -19,8 +19,18 @@ func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, e
 	if !ok {
 		var err error
 		ring, err = keyring.Open(keyring.Config{
-			AllowedBackends: []keyring.BackendType{keyring.BackendType(auth.Backend)},
-			ServiceName:     "simp_" + auth.Name,
+			AllowedBackends:                []keyring.BackendType{keyring.BackendType(auth.Backend)},
+			ServiceName:                    "simp_" + auth.Name,
+			KeyCtlScope:                    "user",
+			KeychainAccessibleWhenUnlocked: true,
+			KeychainTrustApplication:       true,
+			KeychainSynchronizable:         auth.KeychainSynchronizable,
+			FileDir:                        auth.FileDir,
+			KWalletAppID:                   auth.KWalletAppID,
+			KWalletFolder:                  auth.KWalletFolder,
+			LibSecretCollectionName:        auth.LibSecretCollectionName,
+			PassDir:                        auth.PassDir,
+			PassCmd:                        auth.PassCmd,
 		})
 		if err != nil {
 			return nil, err

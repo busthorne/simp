@@ -56,3 +56,12 @@ type Completion struct {
 
 	Err error `json:"-"`
 }
+
+// Map runs `f` on each element of `a` and returns a slice of the results.
+func Map[T any, M any](a []T, f func(T) M) []M {
+	n := make([]M, len(a))
+	for i, e := range a {
+		n[i] = f(e)
+	}
+	return n
+}

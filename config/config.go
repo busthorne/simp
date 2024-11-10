@@ -30,8 +30,12 @@ func (c *Config) LookupModel(alias string) (m Model, ok bool) {
 }
 
 type Default struct {
-	Model            string   `hcl:"model,attr"`
-	MaxTokens        *int     `hcl:"max_tokens,optional"`
+	ModelDefault
+	Model string `hcl:"model"`
+}
+
+type ModelDefault struct {
+	MaxTokens        int      `hcl:"max_tokens,optional"`
 	Temperature      *float64 `hcl:"temperature,optional"`
 	TopP             *float64 `hcl:"top_p,optional"`
 	FrequencyPenalty *float64 `hcl:"frequency_penalty,optional"`
@@ -62,10 +66,12 @@ type History struct {
 // It supports pseudo-globbing, i.e. `path/to/*/` will only match that
 // path alone, and `path/to/*/**` will match all files and directories
 // inside.
+//
+// Group expression will expand both * and ** as relative paths.
 type HistoryPath struct {
-	Path string `hcl:"path,label"`
-	// Group is the folder in the history location, `*` from path will expand.
-	Group string `hcl:"group"`
+	Path   string `hcl:"path,label"`
+	Group  string `hcl:"group,optional"`
+	Ignore bool   `hcl:"ignore,optional"`
 }
 
 // Auth doubles as secrets manager and auth manager.
@@ -78,6 +84,23 @@ type Auth struct {
 	Name string `hcl:"name,label"`
 
 	Backend keyring.BackendType `hcl:"backend"`
+
+	// MacOSKeychainNameKeychainName is the name of the macOS keychain that is used
+	KeychainName string `hcl:"keychain_name,optional"`
+	// KeychainSynchronizable is whether the item can be synchronized to iCloud
+	KeychainSynchronizable bool `hcl:"keychain_icloud,optional"`
+	// FileDir is the directory that keyring files are stored in, ~/ is resolved to the users' home dir
+	FileDir string `hcl:"file_dir,optional"`
+	// KWalletAppID is the application id for KWallet
+	KWalletAppID string `hcl:"kwallet_app,optional"`
+	// KWalletFolder is the folder for KWallet
+	KWalletFolder string `hcl:"kwallet_dir,optional"`
+	// LibSecretCollectionName is the name collection in secret-service
+	LibSecretCollectionName string `hcl:"libsecret_collection,optional"`
+	// PassDir is the pass password-store directory, ~/ is resolved to the users' home dir
+	PassDir string `hcl:"pass_dir,optional"`
+	// PassCmd is the name of the pass executable
+	PassCmd string `hcl:"pass_cmd,optional"`
 }
 
 // Provider is a provider of LLM services, such as OpenAI, Anthropic, etc.
@@ -100,21 +123,16 @@ type Provider struct {
 //
 // It's up to driver whether to allow models by default.
 type Model struct {
-	Name             string   `hcl:"name,label"`
-	Alias            []string `hcl:"alias,optional"`
-	Tags             []string `hcl:"tags,optional"`
-	AllowedIPs       []string `hcl:"allowed_ips,optional"`
-	ContextLength    *int     `hcl:"context_length,optional"`
-	MaxTokens        *int     `hcl:"max_tokens,optional"`
-	Temperature      *float64 `hcl:"temperature,optional"`
-	TopP             *float64 `hcl:"top_p,optional"`
-	FrequencyPenalty *float64 `hcl:"frequency_penalty,optional"`
-	PresencePenalty  *float64 `hcl:"presence_penalty,optional"`
-
-	Latest    bool  `hcl:"latest,optional"`
-	Ignore    bool  `hcl:"ignore,optional"`
-	Embedding bool  `hcl:"embedding,optional"`
-	Images    *bool `hcl:"images,optional"`
+	ModelDefault
+	Name          string   `hcl:"name,label"`
+	Alias         []string `hcl:"alias,optional"`
+	Tags          []string `hcl:"tags,optional"`
+	AllowedIPs    []string `hcl:"allowed_ips,optional"`
+	ContextLength int      `hcl:"context_length,optional"`
+	Latest        bool     `hcl:"latest,optional"`
+	Ignore        bool     `hcl:"ignore,optional"`
+	Embedding     bool     `hcl:"embedding,optional"`
+	Images        bool     `hcl:"images,optional"`
 }
 
 func (m Model) ShortestAlias() (alias string) {
