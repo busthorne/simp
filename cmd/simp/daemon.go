@@ -112,10 +112,10 @@ func gateway() {
 	case "http":
 		f.Listen(addr[1])
 	case "https":
-		fmt.Println("HTTPS is not supported yet.")
+		stderr("HTTPS is not supported yet.")
 		exit(1)
 	default:
-		fmt.Printf("unknown protocol: %s\n", addr[0])
+		stderrf("unknown protocol: %s", addr[0])
 		exit(1)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/busthorne/keyring"
 )
@@ -60,7 +61,7 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	err.Title = ƒ("%d errors, 0 warnings", len(err.Errors))
+	err.Title = ƒ("%d errors, 0 warnings", err.Count())
 	return err.Invalid()
 }
 
@@ -107,10 +108,38 @@ func (d *Daemon) Validate() error {
 	return nil
 }
 
+// globToRegex converts a glob pattern to a regular expression
+func globToRegex(pattern string) string {
+	parts := strings.Split(pattern, "/")
+	for i, part := range parts {
+		if part == "**" {
+			parts[i] = ".*"
+		} else if strings.Contains(part, "*") {
+			parts[i] = "([^/]+)"
+		}
+	}
+	return "^" + strings.Join(parts, "/") + "($|/.*)"
+}
+
 func (h *History) Validate() error {
 	if h == nil {
 		return nil
 	}
-	// TODO: validate
-	return nil
+	err, collect := validate("")
+	for i, hp := range h.Paths {
+		if hp.Path == "" {
+			collect(ø("path %d is empty", i))
+			continue
+		}
+		if glob, err := Glob(hp.Path); err != nil {
+			collect(ø("invalid glob in path %s: %w", hp.Path, err))
+		} else {
+			h.Paths[i].Glob = glob
+		}
+	}
+	return err.Invalid()
+}
+
+func Glob(path string) (*regexp.Regexp, error) {
+	return regexp.Compile(globToRegex(path))
 }

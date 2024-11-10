@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/busthorne/keyring"
@@ -57,10 +56,10 @@ func wizard() {
 			switch spl := strings.Split(listenAddr, "://"); spl[0] {
 			case "http":
 			case "https":
-				fmt.Println("HTTPS is not supported yet.")
+				stderr("HTTPS is not supported yet.")
 				w.abort()
 			default:
-				fmt.Println("Invalid listen address")
+				stderr("Invalid listen address")
 				continue
 			}
 			break
@@ -100,18 +99,18 @@ func wizard() {
 		case "":
 			goto provided
 		default:
-			fmt.Println("Unsupported driver:", driverName)
+			stderr("Unsupported driver:", driverName)
 			continue
 		}
 		ring, err := w.keyring(p)
 		if err != nil && err != errNoKeyring {
-			fmt.Println("Failed to open keyring:", err)
+			stderr("Failed to open keyring:", err)
 			w.abort()
 		}
 		if err != errNoKeyring {
 			err = ring.Set(keyring.Item{Key: "apikey", Data: []byte(p.APIKey)})
 			if err != nil {
-				fmt.Println("Failed to save to keychain:", err)
+				stderr("Failed to save to keychain:", err)
 				w.abort()
 			}
 			p.APIKey = ""
@@ -126,7 +125,7 @@ func wizard() {
 			if p.Driver == "dify" && len(p.Models) == 0 {
 				fmt.Println("Dify API currently requires that bearer token is set per model.")
 				if w.confirm("Abort Dify configuration?") {
-					fmt.Println("Aborted.")
+					stderr("Aborted.")
 					break
 				}
 				goto configure
@@ -143,7 +142,7 @@ provided:
 		w.configureHistory()
 	}
 	if err := w.writeConfig(); err != nil {
-		fmt.Printf("Failed to write config: %v\n", err)
+		stderrf("Failed to write config: %v", err)
 		w.abort()
 	}
 	fmt.Println()
@@ -283,13 +282,13 @@ func (w *wizardState) configureModels(p *config.Provider) {
 			} else {
 				placeholder = spl[0]
 			}
-		default:
-			placeholder = strings.Join(simp.Map(spl, func(s string) string {
-				return s[0:1]
-			}), "")
-			if n, ni := m.Name, len(m.Name); len(placeholder) <= 2 {
-				placeholder = n[0:1] + strconv.Itoa(ni-2) + n[ni-1:]
+		case p.Driver == "anthropic":
+			m.Latest = true
+			placeholder = ""
+			if len(spl) >= 4 {
+				placeholder = "c" + spl[3][0:1] + spl[1][0:1] + spl[2][0:1]
 			}
+		default:
 		}
 		for {
 			const prompt = "Model alias, comma separated [leave blank for none]"

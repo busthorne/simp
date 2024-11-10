@@ -9,6 +9,19 @@ type ValidationError struct {
 	Errors []error
 }
 
+func (ve *ValidationError) Count() int {
+	var n int
+	for _, err := range ve.Errors {
+		switch err := err.(type) {
+		case *ValidationError:
+			n += err.Count()
+		default:
+			n++
+		}
+	}
+	return n
+}
+
 func (ve *ValidationError) Invalid() error {
 	if len(ve.Errors) == 0 {
 		return nil

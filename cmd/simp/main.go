@@ -19,6 +19,7 @@ var (
 	configure        = flag.Bool("configure", false, "interactive configuration wizard")
 	daemon           = flag.Bool("daemon", false, "run as daemon")
 	vim              = flag.Bool("vim", false, "vim mode")
+	historypath      = flag.Bool("historypath", false, "display history path per current location")
 	interactive      = flag.Bool("i", false, "interactive mode")
 	lessThan         = flag.Int("lt", 0, "less than this many tokens")
 	temperature      = flag.Float64("t", 0.7, "temperature")
@@ -26,43 +27,22 @@ var (
 	frequencyPenalty = flag.Float64("fp", 0, "frequency penalty")
 	presencePenalty  = flag.Float64("pp", 0, "presence penalty")
 
-	model string
-	ws    string
-	cfg   *config.Config
-	cable simp.Cable
+	model     string
+	ws        string
+	anthology string // winning history path
+	cfg       *config.Config
+	cable     simp.Cable
 
 	bg = context.Background()
 )
 
-func setup() {
-	p := path.Join(simp.Path, "config")
-	c, err := config.ParsePath(p)
-	if err != nil {
-		stderr("simp:", err)
-		for _, d := range c.Diagnostics {
-			for _, err := range d.Errs() {
-				stderr(err)
-			}
-		}
-		exit(1)
-	}
-	if err := c.Validate(); err != nil {
-		stderrf("simp: %s yielded %v\n", p, err)
-		exit(1)
-	}
-	cfg = c
-	if model == "" {
-		if cfg.Default.Model == "" {
-			stderr("no default model")
-			exit(1)
-		}
-		model = cfg.Default.Model
-	}
-}
-
 func main() {
 	wave() // the flags
 	setup()
+	if *historypath {
+		fmt.Println(anthology)
+		return
+	}
 	if *daemon {
 		gateway()
 	}
@@ -118,6 +98,40 @@ func wave() {
 			exit(1)
 		}
 	}
+}
+
+func setup() {
+	p := path.Join(simp.Path, "config")
+	c, err := config.ParsePath(p)
+	if err != nil {
+		stderr("simp:", err)
+		for _, d := range c.Diagnostics {
+			for _, err := range d.Errs() {
+				stderr(err)
+			}
+		}
+		exit(1)
+	}
+	if err := c.Validate(); err != nil {
+		stderrf("%s: %v\n", p, err)
+		exit(1)
+	}
+	cfg = c
+	if model == "" {
+		if cfg.Default.Model == "" {
+			stderr("no default model")
+			exit(1)
+		}
+		model = cfg.Default.Model
+	}
+	// get working directory
+	wd, err := os.Getwd()
+	if err != nil {
+		stderr("simp:", err)
+		exit(1)
+	}
+	// winning path for history
+	anthology = history(cfg.History, wd)
 }
 
 func stderr(a ...interface{}) {

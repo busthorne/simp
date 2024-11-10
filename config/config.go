@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -89,6 +90,8 @@ type HistoryPath struct {
 	Path   string `hcl:"path,label"`
 	Group  string `hcl:"group,optional"`
 	Ignore bool   `hcl:"ignore,optional"`
+
+	Glob *regexp.Regexp
 }
 
 // Auth doubles as secrets manager and auth manager.

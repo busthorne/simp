@@ -13,25 +13,22 @@ simp -configure
 echo 'Tell a joke.' | simp
 # gpt-4o [temperature, [max_length, [top_p, [frequency_penalty, [presence_penalty]]]]]
 echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
-
-# optional
-simp -daemon
 ```
 
 ## Features
 - [x] Prompt from stdin, complete to stdout
 - [x] Keychains
 - [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format
-- [ ] [Daemon mode](#daemon)
+- [x] [Daemon mode](#daemon)
 	- [x] OpenAI-compatible API gateway
 	- [ ] Universal [Batch API][2]
 	- [ ] SSO
 - [x] Interactive mode
 - [x] [Vim mode][1]
 - [x] Setup wizard `-configure`
-- [ ] History
-	- [ ] Group by path
-	- [ ] Annotations
+- [x] [History](#history)
+	- [x] Group by path
+	- [x] Annotations
 
 ## Cable format
 Simp includes a special-purpose plaintext cable format for chat conversations.
@@ -60,6 +57,13 @@ The idea is that the format is simple enough for it to be used in a notepad appl
 
 All your conversations are just plaintext files that you can [ripgrep][3] and [fzf][4] over.
 
+## Daemon
+```bash
+simp -daemon
+```
+
+
+
 ### Configuration
 Simp tools will use `$SIMPPATH` that is set to `$HOME/.simp` by default. The CLI tool will function with or without a daemon, however a daemon is beneficial if you care about async features that `simpd` has to offer besides the API gateway; it uses [sqlite-vec][6] for persistence, and that only allows one writer at a time.
 
@@ -71,19 +75,21 @@ The config files are located in `$SIMPPATH/config` in [HCL][5] format, so Terraf
 default {
 	model = "4o"
 	temperature = 0.7
+	# ... the usual suspects ...
 }
 
 daemon {
-	listen_addr = "0.0.0.0:51015"
-	allowed_ips = ["10.0.0.0/8"]
+	listen_addr = "127.0.0.1:51015"
+	#allowed_ips = ["10.0.0.0/8"]
 }
 
 # use macOS system keychain
 auth "keyring" "default" {
 	backend = "keychain"
+	keychain_icloud = true
 }
 
-provider "openai" "platform" {
+provider "openai" "api" {
 	model "gpt-4o" {
 		alias = ["4o"]
 	}
@@ -92,7 +98,8 @@ provider "openai" "platform" {
 		temperature = 1.0
 	}
 }
-provider "anthropic" "console" {
+
+provider "anthropic" "api" {
 	model "claude-3-5-sonnet" {
 		alias = ["cs35"]
 		latest = true
@@ -103,7 +110,7 @@ provider "anthropic" "console" {
 	}
 }
 provider "openai" "llama-cpp-python" {
-	base_url = "http://localhost:8000/v1"
+	base_url = "http://127.0.0.1:8000/v1"
 	model "gemma-2-9b-simpo" {
 		alias = ["g9s"]
 		tags = ["q4_0", "q8_0"] # the first tag is the default
@@ -123,12 +130,13 @@ history {
 	path "~/projects/*/**" {
 		group = "*"
 	}
-	annotate_with = "cs35"
+	# except this
+	path "~/projects/simp" {
+		ignore = true
+	}
+	annotate_with = "cs35" # see. claude-3-5-sonnet
 }
 ```
-
-## Daemon
-TBA
 
 ## License
 MIT

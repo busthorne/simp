@@ -65,6 +65,28 @@ func (c Cable) Messages() []openai.ChatCompletionMessage {
 	return t
 }
 
+func (c Cable) String() string {
+	var s strings.Builder
+	for i, m := range c.Thread {
+		if i == 0 && m.Role == "system" {
+			s.WriteString(m.Content + "\n\n")
+			continue
+		}
+		s.WriteString(c.Whitespace)
+		switch m.Role {
+		case "user":
+			s.WriteString(MarkUser)
+		case "assistant":
+			s.WriteString(MarkAsst)
+		}
+		if m.Annotation != "" {
+			s.WriteString(" " + m.Annotation)
+		}
+		s.WriteString("\n" + m.Content + "\n\n")
+	}
+	return s.String()
+}
+
 // ParseCable attempts to parse a string into a Cable structure.
 //
 // It returns an error if the input is not a cable, or appears
