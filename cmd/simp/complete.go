@@ -71,10 +71,10 @@ func promptComplete() error {
 		PresencePenalty:  coalesce32(presencePenalty, cfg.Default.PresencePenalty, model.PresencePenalty),
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("complete: %v", err)
 	}
 	if err := resp.Err; err != nil {
-		return err
+		return fmt.Errorf("stream complete: %v", err)
 	}
 	for chunk := range resp.Stream {
 		c := chunk.Choices[0]
@@ -88,7 +88,7 @@ func promptComplete() error {
 		case "content_filter":
 		case "null":
 		case "error":
-			return fmt.Errorf("error: %v", resp.Err)
+			return fmt.Errorf("stream complete chunk: %w", resp.Err)
 		}
 	}
 	turn++

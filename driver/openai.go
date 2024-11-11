@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"io"
 
 	"github.com/busthorne/simp"
 	"github.com/sashabaranov/go-openai"
@@ -44,7 +45,12 @@ func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (c *simp.Compl
 			defer close(c.Stream)
 			for {
 				r, err := s.Recv()
-				if err != nil {
+				switch err {
+				case nil:
+					c.Stream <- r
+				case io.EOF:
+					return
+				default:
 					c.Err = err
 					// Send error as final message
 					c.Stream <- openai.ChatCompletionStreamResponse{
@@ -54,7 +60,6 @@ func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (c *simp.Compl
 					}
 					return
 				}
-				c.Stream <- r
 			}
 		}()
 	} else {

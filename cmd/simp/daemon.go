@@ -4,24 +4,46 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/busthorne/simp/driver"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/sashabaranov/go-openai"
 )
 
 func gateway() {
-	f := fiber.New()
+	f := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
 	f.Use(cors.New())
 	v1 := f.Group("/v1")
 	v1.Get("/ping", func(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	})
 	v1.Get("/models", func(c *fiber.Ctx) error {
-		return c.JSON(driver.Drivers)
+		var models []openai.Model
+		for _, p := range cfg.Providers {
+			for _, m := range p.Models {
+				models = append(models, openai.Model{
+					ID:     m.Name,
+					Object: "model",
+				})
+				for _, a := range m.Alias {
+					models = append(models, openai.Model{
+						ID:     a,
+						Object: "model",
+						Root:   m.Name,
+					})
+				}
+			}
+		}
+		return c.JSON(openai.ModelsList{
+			Models: models,
+		})
 	})
 	v1.Post("/embeddings", func(c *fiber.Ctx) error {
 		var req openai.EmbeddingRequest
@@ -109,13 +131,27 @@ func gateway() {
 	})
 	addr := strings.Split(cfg.Daemon.ListenAddr, "://")
 	switch addr[0] {
-	case "http":
-		f.Listen(addr[1])
 	case "https":
 		stderr("HTTPS is not supported yet.")
 		exit(1)
+	case "http":
+		fmt.Println(cfg.Daemon.BaseURL())
+
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			if err := f.Listen(addr[1]); err != nil {
+				stderr("no listen:", err)
+				exit(1)
+			}
+		}()
+		<-sig
+		if err := f.Shutdown(); err != nil {
+			stderr("no shutdown:", err)
+			exit(1)
+		}
 	default:
-		stderrf("unknown protocol: %s", addr[0])
+		stderr("unknown protocol:", addr[0])
 		exit(1)
 	}
 }

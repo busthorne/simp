@@ -68,6 +68,7 @@ func (d Daemon) BaseURL() string {
 	if addr == "" {
 		addr = d.DaemonAddr
 	}
+	addr = strings.ReplaceAll(addr, "0.0.0.0", "127.0.0.1")
 	return fmt.Sprintf("%s/v1", addr)
 }
 

@@ -45,6 +45,7 @@ func main() {
 	}
 	if *daemon {
 		gateway()
+		return
 	}
 	defer saveHistory()
 	for {

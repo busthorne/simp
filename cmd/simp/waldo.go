@@ -17,7 +17,9 @@ import (
 func findWaldo(alias string) (simp.Driver, config.Model, error) {
 	if d := cfg.Daemon; !*daemon && d != nil {
 		drv := driver.NewDaemon(*d)
-		if err := drv.Ping(); err == nil {
+		if err := drv.Ping(); err != nil {
+			stderr("daemon not responding:", err)
+		} else {
 			return drv, config.Model{Name: alias}, nil
 		}
 	}
