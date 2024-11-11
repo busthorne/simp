@@ -43,8 +43,16 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 	c = &simp.Completion{}
 
 	// Convert messages to Anthropic format
-	messages := make([]anthropic.MessageParam, len(req.Messages))
+	messages := []anthropic.MessageParam{}
+	system := ""
 	for i, msg := range req.Messages {
+		if msg.Role == "system" {
+			if i != 0 {
+				return c, fmt.Errorf("misplaced system message")
+			}
+			system = msg.Content
+			continue
+		}
 		var blocks []anthropic.MessageParamContentUnion
 		// Handle text content
 		if msg.Content != "" {
@@ -67,9 +75,9 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 		}
 		switch msg.Role {
 		case "user":
-			messages[i] = anthropic.NewUserMessage(blocks...)
+			messages = append(messages, anthropic.NewUserMessage(blocks...))
 		case "assistant":
-			messages[i] = anthropic.NewAssistantMessage(blocks...)
+			messages = append(messages, anthropic.NewAssistantMessage(blocks...))
 		default:
 			return c, simp.ErrUnsupportedRole
 		}
@@ -77,6 +85,11 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 	params := anthropic.MessageNewParams{
 		Model:    anthropic.F(req.Model),
 		Messages: anthropic.F(messages),
+	}
+	if system != "" {
+		params.System = anthropic.F([]anthropic.TextBlockParam{
+			anthropic.NewTextBlock(system),
+		})
 	}
 	if req.MaxTokens > 0 {
 		params.MaxTokens = anthropic.F(int64(req.MaxTokens))

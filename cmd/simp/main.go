@@ -51,6 +51,8 @@ func main() {
 		switch err := promptComplete(); err {
 		case nil:
 		case io.EOF:
+			// so that the reader doesn't have to wait for history
+			os.Stdout.Close()
 			return
 		default:
 			stderr(err)
@@ -132,6 +134,10 @@ func setup() {
 	}
 	// winning path for history
 	anthology = history(cfg.History, wd)
+	if err := os.MkdirAll(anthology, 0755); err != nil {
+		stderrf("history path %s per working directory: %v", anthology, err)
+		exit(1)
+	}
 }
 
 func stderr(a ...interface{}) {

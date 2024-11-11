@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"regexp"
@@ -38,7 +39,7 @@ func saveHistory() {
 		if cable.Thread[0].Role != "system" {
 			cable.Thread = append([]simp.Message{task}, cable.Thread...)
 		} else {
-
+			cable.Thread[0] = task
 		}
 		resp, err := drv.Complete(bg, simp.Complete{
 			Model:    m.Name,
@@ -54,7 +55,19 @@ func saveHistory() {
 	if title == "" {
 		title = time.Now().Format(time.RFC3339)
 	}
-	os.WriteFile(path.Join(anthology, title+".simp.md"), []byte(cable.String()), 0644)
+	// TODO: use cache to avoid writing the same file multiple times
+	for i := 0; i < 10; i++ {
+		fpath := ""
+		if i > 0 {
+			fpath = path.Join(anthology, fmt.Sprintf("%s-%d.simp.md", title, i+1))
+		} else {
+			fpath = path.Join(anthology, title+".simp.md")
+		}
+		if _, err := os.Stat(fpath); err != nil {
+			os.WriteFile(fpath, []byte(cable.String()), 0644)
+			break
+		}
+	}
 }
 
 // history will mkdir before returning target history path per working directory

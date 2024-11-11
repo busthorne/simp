@@ -3,7 +3,11 @@
 echo 'Tell a joke.' | simp
 ```
 
-Simp—a **sim**ulating **p**roxy—is a simple tool that provides a single point of consumption for many OpenAI-compatible, but also the incompatible inference backends; it's somehow similar to [llm][0] by Simon Willison but definitely not inspired by it. (Funny: I did the first version of this program the day before Simon did his.) Consider [vim-simp][1] to bring hot agents to your scratch buffers. If you're anything like me, you will love it! There's also `simp -daemon` which is, like, a whole API gateway thing, most notably supporting [Batch API][2] that is to say it keeps state, & absolutely will default to normal endpoints if some provider won't support it.
+Simp is a simple point of consumption and an ergonomic CLI tool for many OpenAI-compatible, but also _the incompatible_ inference backends; it's somehow similar to [llm][0] by Simon Willison but definitely _not_ inspired by it. (Funny: I did the first version of this program the day before Simon did his.)
+
+Consider [vim-simp][1] to bring hot agents to your scratch buffers. If you're anything like me, you will love it!
+
+There's also `simp -daemon` which is, like, a whole API gateway thing; it only supports Anthropic and OpenAI drivers for now (which supports a surprising number of backends, including most self-hosted ones.) It uses the configured keychain by default, however in the future I'll be adding compartmentation, and SSO (via Cloudflare, JWT, OIDC, you name it.) But perhaps most notably, as soon as I'm able to figure out the most elegant way to handle state ([sqlite-vec][6]?) it will follow OpenAI's [Batch API][2] in provider-agnostic manner, & default to normal endpoints if some provider won't support it.
 
 The tool is designed ergonomically so that you could bring it to shell scripts.
 
@@ -62,10 +66,12 @@ All your conversations are just plaintext files that you can [ripgrep][3] and [f
 simp -daemon
 ```
 
+The CLI tool will function with or without a daemon.
 
+Otherwise, the idea is to 
 
 ### Configuration
-Simp tools will use `$SIMPPATH` that is set to `$HOME/.simp` by default. The CLI tool will function with or without a daemon, however a daemon is beneficial if you care about async features that `simpd` has to offer besides the API gateway; it uses [sqlite-vec][6] for persistence, and that only allows one writer at a time.
+Simp tools will use `$SIMPPATH` that is set to `$HOME/.simp` by default.
 
 For basic use, interactive `simp -configure` is sufficient.
 
@@ -109,8 +115,8 @@ provider "anthropic" "api" {
 		latest = true
 	}
 }
-provider "openai" "llama-cpp-python" {
-	base_url = "http://127.0.0.1:8000/v1"
+provider "openai" "ollama" {
+	base_url = "http://127.0.0.1:11434/v1"
 	model "gemma-2-9b-simpo" {
 		alias = ["g9s"]
 		tags = ["q4_0", "q8_0"] # the first tag is the default
@@ -134,7 +140,7 @@ history {
 	path "~/projects/simp" {
 		ignore = true
 	}
-	annotate_with = "cs35" # see. claude-3-5-sonnet
+	annotate_with = "ch35" # see. claude-3-5-haiku
 }
 ```
 

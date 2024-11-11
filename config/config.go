@@ -157,13 +157,11 @@ type Model struct {
 }
 
 func (m Model) ShortestAlias() (alias string) {
+	alias = m.Name
 	for _, a := range m.Alias {
 		if len(a) < len(alias) {
 			alias = a
 		}
-	}
-	if alias == "" {
-		return m.Name
 	}
 	return
 }
