@@ -104,6 +104,9 @@ func history(h *config.History, wd string) string {
 
 // expandGroup replaces wildcards in group expression with actual values
 func expandGroup(path string, hp config.HistoryPath) string {
+	if hp.Glob == nil {
+		return ""
+	}
 	matches := hp.Glob.FindStringSubmatch(path)
 	target := hp.Group
 	for _, match := range matches[1:] {

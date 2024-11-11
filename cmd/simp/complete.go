@@ -22,8 +22,6 @@ func cabling(prompt string) error {
 	return nil
 }
 
-var turn = 0
-
 // promptComplete reads the prompt from stdin once in non-interactive mode,
 // or keeps asking for newline-terminated input otherwise. it would insert
 // a prompt marker in either vim, or interactive mode.
@@ -56,9 +54,7 @@ func promptComplete() error {
 		return err
 	}
 	if *vim || *interactive {
-		if turn > 0 {
-			fmt.Println()
-		}
+		fmt.Println()
 		fmt.Printf("%s%s %s\n", ws, simp.MarkAsst, model.ShortestAlias())
 	}
 	resp, err := drv.Complete(bg, simp.Complete{
@@ -91,10 +87,9 @@ func promptComplete() error {
 			return fmt.Errorf("stream complete chunk: %w", resp.Err)
 		}
 	}
-	turn++
 	fmt.Println()
 	if *vim {
-		fmt.Printf("\n%s%s\n", ws, simp.MarkUser)
+		fmt.Printf("\n%s%s\n\n", ws, simp.MarkUser)
 	}
 	if !*interactive {
 		return io.EOF
