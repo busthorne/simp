@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 
-	"github.com/anthropics/anthropic-sdk-go/option"
+	anthropic "github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/busthorne/simp"
-	"github.com/busthorne/simp/auth"
 	"github.com/busthorne/simp/config"
 	"github.com/busthorne/simp/driver"
 	"github.com/sashabaranov/go-openai"
+	gemini "google.golang.org/api/option"
 )
 
 // findWaldo will check if the daemon is configured, and will simply create a daemon driver;
@@ -18,7 +18,7 @@ func findWaldo(alias string) (simp.Driver, config.Model, error) {
 	if d := cfg.Daemon; !*daemon && d != nil {
 		drv := driver.NewDaemon(*d)
 		if err := drv.Ping(); err != nil {
-			stderr("daemon not responding:", err)
+			stderr(err)
 		} else {
 			return drv, config.Model{Name: alias}, nil
 		}
@@ -34,23 +34,17 @@ func findWaldo(alias string) (simp.Driver, config.Model, error) {
 func drive(p config.Provider) simp.Driver {
 	var apikey string
 	if p.APIKey == "" {
-		for _, a := range cfg.Auth {
-			if a.Type != "keyring" {
-				continue
-			}
-			if p.Keyring == "" || a.Name == p.Keyring {
-				ring, err := auth.NewKeyring(a, &p)
-				if err != nil {
-					continue
-				}
-				item, err := ring.Get("apikey")
-				if err != nil {
-					continue
-				}
-				apikey = string(item.Data)
-				break
-			}
+		ring, err := keyringFor(p, cfg)
+		if err != nil {
+			stderr("keyring error:", err)
+			exit(1)
 		}
+		item, err := ring.Get("apikey")
+		if err != nil {
+			stderr("keyring read error:", err)
+			exit(1)
+		}
+		apikey = string(item.Data)
 	} else {
 		apikey = p.APIKey
 	}
@@ -60,7 +54,9 @@ func drive(p config.Provider) simp.Driver {
 		c.BaseURL = p.BaseURL
 		return driver.NewOpenAI(c)
 	case "anthropic":
-		return driver.NewAnthropic(option.WithAPIKey(apikey))
+		return driver.NewAnthropic(anthropic.WithAPIKey(apikey))
+	case "gemini":
+		return driver.NewGemini(gemini.WithAPIKey(apikey))
 	// case "dify":
 	default:
 		fmt.Printf("unsupported driver: %q\n", p.Driver)

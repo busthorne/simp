@@ -64,13 +64,13 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 			case openai.ChatMessagePartTypeText:
 				blocks = append(blocks, anthropic.NewTextBlock(part.Text))
 			case openai.ChatMessagePartTypeImageURL:
-				b64, mime, err := a.url2image64(part.ImageURL.URL)
+				mime, b, err := url2image64(ctx, part.ImageURL.URL)
 				if err != nil {
 					return c, fmt.Errorf("message %d part %d: %w", i, j, err)
 				}
-				blocks = append(blocks, anthropic.NewImageBlockBase64(mime, b64))
+				blocks = append(blocks, anthropic.NewImageBlockBase64(mime, base64.StdEncoding.EncodeToString(b)))
 			default:
-				return c, fmt.Errorf("message %d part %d: unsupported '%v' multipart type", i, j, part.Type)
+				return c, fmt.Errorf("message %d part %d: type %s is not supported", i, j, part.Type)
 			}
 		}
 		switch msg.Role {
@@ -79,7 +79,7 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 		case "assistant":
 			messages = append(messages, anthropic.NewAssistantMessage(blocks...))
 		default:
-			return c, simp.ErrUnsupportedRole
+			return c, fmt.Errorf("message %d: %w", i+1, simp.ErrUnsupportedRole)
 		}
 	}
 	params := anthropic.MessageNewParams{
@@ -151,10 +151,10 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 	return
 }
 
-func (a *Anthropic) url2image64(url string) (mime string, b64 string, err error) {
-	resp, err := http.DefaultClient.Get(url)
+func url2image64(ctx context.Context, url string) (mime string, b []byte, err error) {
+	resp, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 
@@ -168,8 +168,8 @@ func (a *Anthropic) url2image64(url string) (mime string, b64 string, err error)
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
-	b64 = base64.StdEncoding.EncodeToString(data)
+	b = data
 	return
 }

@@ -158,7 +158,7 @@ func gateway() {
 
 func badRequest(c *fiber.Ctx, err any) error {
 	return c.Status(fiber.StatusBadRequest).
-		JSON(fiber.Map{"error": err})
+		JSON(openai.APIError{Type: "error", Message: fmt.Sprintf("%s", err)})
 }
 
 func internalError(c *fiber.Ctx, err any) error {

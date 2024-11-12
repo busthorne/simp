@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/busthorne/keyring"
 	"github.com/hashicorp/hcl/v2"
 )
 
@@ -101,10 +100,10 @@ type HistoryPath struct {
 // the API keys, and `cloudflare` will provide SSO and RBAC for
 // simpd.
 type Auth struct {
-	Type string `hcl:"type,label"`
-	Name string `hcl:"name,label"`
-
-	Backend keyring.BackendType `hcl:"backend"`
+	Type    string `hcl:"type,label"`
+	Name    string `hcl:"name,label"`
+	Backend string `hcl:"backend"`
+	Default bool   `hcl:"default,optional"`
 
 	// MacOSKeychainNameKeychainName is the name of the macOS keychain that is used
 	KeychainName string `hcl:"keychain_name,optional"`

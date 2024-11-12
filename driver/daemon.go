@@ -40,10 +40,10 @@ func (d *Daemon) Ping() error {
 	}
 	resp, err := client.Get(d.baseUrl + "/ping")
 	if err != nil {
-		return err
+		return fmt.Errorf("daemon: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("daemon not responding: %s", resp.Status)
+		return fmt.Errorf("daemon: %s", resp.Status)
 	}
 	return nil
 }

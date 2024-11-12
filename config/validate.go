@@ -30,15 +30,36 @@ func (c *Config) Validate() error {
 	auths := duplicates{}
 	providers := duplicates{}
 	models := duplicates{}
-
-	for _, a := range c.Auth {
+	defaults := map[string]int{}
+	for i, a := range c.Auth {
+		if a.Name == "default" {
+			a.Default = true
+			c.Auth[i] = a
+		}
 		collect(a.Validate(), ƒ(`auth "%s" "%s"`, a.Type, a.Name))
 
-		id := a.Name + ":" + a.Type
+		id := a.Type + ":" + a.Name
 		if _, ok := auths[id]; ok {
 			collect(ø(`duplicate auth "%s" "%s"`, a.Name, a.Type))
 		}
 		auths[id] = count{}
+		if n, ok := defaults[a.Type]; ok {
+			defaults[a.Type] = n + 1
+		} else {
+			if a.Default {
+				n = 1
+			}
+			defaults[a.Type] = n
+		}
+	}
+	for typ, n := range defaults {
+		switch n {
+		case 1:
+		case 0:
+			collect(ø("no default %s block configured", typ))
+		default:
+			collect(ø("multiple default %s blocks configured", typ))
+		}
 	}
 	for _, p := range c.Providers {
 		collect(p.Validate(), ƒ(`provider "%s" "%s"`, p.Driver, p.Name))

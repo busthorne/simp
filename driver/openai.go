@@ -35,35 +35,36 @@ func (o *OpenAI) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, 
 
 func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (c *simp.Completion, err error) {
 	c = &simp.Completion{}
-	if req.Stream {
-		s, ret := o.CreateChatCompletionStream(ctx, req)
-		if ret != nil {
-			return c, ret
-		}
-		c.Stream = make(chan openai.ChatCompletionStreamResponse)
-		go func() {
-			defer close(c.Stream)
-			for {
-				r, err := s.Recv()
-				switch err {
-				case nil:
-					c.Stream <- r
-				case io.EOF:
-					return
-				default:
-					c.Err = err
-					// Send error as final message
-					c.Stream <- openai.ChatCompletionStreamResponse{
-						Choices: []openai.ChatCompletionStreamChoice{{
-							FinishReason: "error",
-						}},
-					}
-					return
-				}
-			}
-		}()
-	} else {
+	if !req.Stream {
 		c.ChatCompletionResponse, err = o.CreateChatCompletion(ctx, req)
+		return
 	}
+
+	s, err := o.CreateChatCompletionStream(ctx, req)
+	if err != nil {
+		return c, err
+	}
+	c.Stream = make(chan openai.ChatCompletionStreamResponse)
+	go func() {
+		defer close(c.Stream)
+		for {
+			r, err := s.Recv()
+			switch err {
+			case nil:
+				c.Stream <- r
+			case io.EOF:
+				return
+			default:
+				c.Err = err
+				// Send error as final message
+				c.Stream <- openai.ChatCompletionStreamResponse{
+					Choices: []openai.ChatCompletionStreamChoice{{
+						FinishReason: "error",
+					}},
+				}
+				return
+			}
+		}
+	}()
 	return
 }

@@ -1,3 +1,9 @@
 package driver
 
-var Drivers = []string{"openai", "anthropic", "dify"}
+import "strings"
+
+var Drivers = []string{"openai", "anthropic", "gemini", "dify"}
+
+func ListString() string {
+	return strings.Join(Drivers, ", ")
+}

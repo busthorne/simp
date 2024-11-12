@@ -67,10 +67,8 @@ func promptComplete() error {
 		PresencePenalty:  coalesce32(presencePenalty, cfg.Default.PresencePenalty, model.PresencePenalty),
 	})
 	if err != nil {
-		return fmt.Errorf("complete: %v", err)
-	}
-	if err := resp.Err; err != nil {
-		return fmt.Errorf("stream complete: %v", err)
+		stderrf("complete: %v\n", err)
+		exit(1)
 	}
 	for chunk := range resp.Stream {
 		c := chunk.Choices[0]
@@ -84,8 +82,11 @@ func promptComplete() error {
 		case "content_filter":
 		case "null":
 		case "error":
-			return fmt.Errorf("stream complete chunk: %w", resp.Err)
 		}
+	}
+	if err := resp.Err; err != nil {
+		stderrf("\nstream complete: %v\n", err)
+		exit(1)
 	}
 	fmt.Println()
 	if *vim {

@@ -21,6 +21,11 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 
 ## Features
 - [x] Prompt from stdin, complete to stdout
+- [x] Drivers
+	- [x] OpenAI
+	- [x] Anthropic
+	- [x] Gemini
+	- [x] [Dify][10]
 - [x] Keychains
 - [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format
 - [x] [Daemon mode](#daemon)
@@ -167,11 +172,11 @@ history {
 ## History
 This is perhaps the biggest upgrade since the olden days of `simp` when—trivia—it was still called `gpt`.
 
-The history option is basically making sure your cables are not evaporating when you want them to be remembered, cherished, and otherwise organised—this is why we have `$SIMPPATH/history` folder. By default, all simp cables are stored there. You can control how they're grouped in the config: by specifying paths and grouping expressions, which will be used to catalogue the cables appropriately. Unfortunately, it's all relative to history directory now. Absolute paths will be added at some point.
+The history option is basically making sure your cables are not evaporating when you want them to be remembered, cherished, and otherwise organised—this is why we have `$SIMPPATH/history` folder. By default, all simp cables are stored there. You can control how they're grouped in the config: by specifying paths and grouping expressions, which will be used to catalogue the cables appropriately. Unfortunately, it's all relative to history directory now. Absolute paths will be added at some point. 
 
 Note that you may use wildcards.
 
-For example, you could group the cables produced in `/opt/projects` by top-level project directory name. In that case, you would use `/opt/projects/*/**`, and `*` in the group expression. If you had a project called "simp", all cables created in `/opt/projects/simp` would be saved under "simp/" in the history directory.
+For example, you could group the cables produced in `/opt/projects` by top-level project directory name. In that case, you would use `/opt/projects/*/**`, and `*` in the group expression. If you had a project called "simp", all cables created in `/opt/projects/simp` would be saved under `simp/` in the history directory. Without the `**` in the path expression, the the children would not be considered for grouping, however this is not the case for ignore: paths are ignored inclusively.
 
 The longest-prefix match wins; you may similarly configure to ignore certain paths for good.
 
@@ -180,7 +185,7 @@ cd my/project/path
 simp -historypath # will tell you where your cables are going
 ```
 
-Without ** in the path expression, the paths themselves would be considered, while their children would not. Similarly "/opt/projects/simp" would not apply to the child directories inside simp. If you wish to include children, you should always use the ** suffix.  Who knows, we might add regular expressions someday :-)
+Who knows, we might add regular expressions someday :-)
 
 ### Annotations
 This is exactly the feature that triggered me to obsessively re-write the tool, and bring it to its current state.
@@ -202,3 +207,4 @@ MIT
 [7]: https://www.cursor.com/
 [8]: https://github.com/pgvector/pgvector
 [9]: https://github.com/tensorchord/pgvecto.rs
+[10]: https://github.com/langgenius/dify

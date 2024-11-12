@@ -80,7 +80,7 @@ func wizard() {
 	for {
 	configure:
 		fmt.Println()
-		fmt.Println("Available drivers:", strings.Join(driver.Drivers, ", "))
+		fmt.Println("Available drivers:", driver.ListString())
 		blank := ""
 		if len(w.Providers) > 0 {
 			blank = " [leave blank to continue]"
@@ -91,8 +91,8 @@ func wizard() {
 		switch driverName {
 		case "openai":
 			p = w.configureOpenAI()
-		case "anthropic":
-			p = w.configureAnthropic()
+		case "anthropic", "gemini":
+			p = w.configureDriver(driverName)
 		case "dify":
 			fmt.Println("TBA.")
 			continue
@@ -102,7 +102,7 @@ func wizard() {
 			stderr("Unsupported driver:", driverName)
 			continue
 		}
-		ring, err := w.keyring(p)
+		ring, err := keyringFor(p, &w.Config)
 		if err != nil && err != errNoKeyring {
 			stderr("Failed to open keyring:", err)
 			w.abort()
@@ -150,6 +150,45 @@ provided:
 	exit(0)
 }
 
+func wizardApikey() {
+	ringing := slices.ContainsFunc(cfg.Auth, func(a config.Auth) bool {
+		return a.Type == "keyring"
+	})
+	if !ringing {
+		stderr("Please configure keyring first, or simply put it in the config!")
+		exit(1)
+	}
+
+	var w wizardState
+	fmt.Println("Available drivers:", driver.ListString())
+	d := w.prompt("Driver", "")
+	if !slices.Contains(driver.Drivers, d) {
+		stderr("Driver does not exist:", d)
+		exit(1)
+	}
+	provider := w.prompt("Provider name", "")
+	for _, p := range cfg.Providers {
+		if p.Driver != d || p.Name != provider {
+			continue
+		}
+		ring, err := keyringFor(p, cfg)
+		if err != nil {
+			stderr("Keyring error:", err)
+			exit(1)
+		}
+		p.APIKey = w.apikey()
+		err = ring.Set(keyring.Item{Key: "apikey", Data: []byte(p.APIKey)})
+		if err != nil {
+			stderr("Keyring write error:", err)
+			exit(1)
+		}
+		fmt.Println("Done")
+		return
+	}
+	stderr("Provider not found")
+	exit(1)
+}
+
 func (w *wizardState) configureKeyring() {
 	fmt.Println("How would you like to store your secrets such as API keys?")
 	fmt.Println("\tconfig (not recommended)")
@@ -167,7 +206,7 @@ func (w *wizardState) configureKeyring() {
 			fmt.Println("Unsupported backend")
 			continue
 		}
-		cfg := config.Auth{Type: "keyring", Backend: backend}
+		cfg := config.Auth{Type: "keyring", Backend: string(backend)}
 		cfg.Name = w.prompt("Keyring name [default]", "default")
 		switch backend {
 		case "config":
@@ -220,10 +259,10 @@ func (w *wizardState) configureOpenAI() (p config.Provider) {
 	return
 }
 
-func (w *wizardState) configureAnthropic() (p config.Provider) {
-	p.Driver = "anthropic"
+func (w *wizardState) configureDriver(driver string) (p config.Provider) {
+	p.Driver = driver
 	p.APIKey = w.apikey()
-	p.Name = w.defaultProviderName("anthropic")
+	p.Name = w.defaultProviderName(driver)
 	return
 }
 
@@ -396,21 +435,24 @@ func (w *wizardState) configureHistory() {
 	}
 }
 
-const historyHelp = `By default, all simp cables are stored in the same history directory.
-You can override this by specifying paths and grouping expressions, which will be used
-to catalogue the cables appropriately.
+const historyHelp = `The history option is basically making sure your cables are not evaporating
+when you want them to be remembered, cherished, and otherwise organised—this is why we have
+$SIMPPATH/history folder. By default, all simp cables are stored there. You can control how
+they're grouped in the config: by specifying paths and grouping expressions, which will be
+used to catalogue the cables appropriately.
 
-Note that you may use wildcards. For example, you could group the cables produced in
-/opt/projects by top-level project directory name. In that case, you would use
-/opt/projects/*/**, and * in the group expression. For example: if you had a project
-called "simp", all cables created in /opt/projects/simp will be saved under "simp/"
-in the history directory.
+Unfortunately, it's all relative to history directory now. Absolute paths will be added at some point. 
 
-The longest-prefix match wins; you may later configure to ignore certain paths.
+Note that you may use wildcards.
 
-Without ** in the path expression, the paths themselves would be considered, while
-their children would not. Similarly "/opt/projects/simp" would not apply to the
-child directories inside simp. If you wish to include children,
-you should always use the ** suffix.
+For example, you could group the cables produced in /opt/projects by top-level project directory name.
+In that case, you would use /opt/projects/*/**, and * in the group expression. If you had a project
+named "simp", all cables created in /opt/projects/simp would be saved under "simp/" in the history
+directory. Without the ** in the path expression, the the children would not be considered for
+grouping, however this is not the case for ignore: paths are ignored inclusively. The longest-prefix
+match wins; you may similarly configure to ignore certain paths for good.
 
-Who knows, we might add regular expressions someday :-)`
+cd my/project/path
+simp -historypath
+
+This will let you know where your cables are going.`

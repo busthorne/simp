@@ -25,6 +25,9 @@ daemon {
 {{- range .Auth }}
 auth "{{ .Type }}" "{{ .Name }}" {
 	backend = "{{ .Backend }}"
+	{{- if .Default }}
+	default = true
+	{{- end }}
 	{{- if .KeychainName }}
 	keychain_name = "{{ .KeychainName }}"
 	{{- end }}

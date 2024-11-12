@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -10,13 +11,16 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/busthorne/keyring"
 	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/auth"
 	"github.com/busthorne/simp/config"
 )
 
 var (
 	// diff             = flag.Bool("diff", false, "if configured, diff from instructions")
 	configure        = flag.Bool("configure", false, "interactive configuration wizard")
+	apikey           = flag.Bool("apikey", false, "configure provider apikey in keyring")
 	daemon           = flag.Bool("daemon", false, "run as daemon")
 	vim              = flag.Bool("vim", false, "vim mode")
 	historypath      = flag.Bool("historypath", false, "display history path per current location")
@@ -39,11 +43,14 @@ var (
 func main() {
 	wave() // the flags
 	setup()
-	if *historypath {
+	switch {
+	case *apikey:
+		wizardApikey()
+		return
+	case *historypath:
 		fmt.Println(anthology)
 		return
-	}
-	if *daemon {
+	case *daemon:
 		gateway()
 		return
 	}
@@ -135,10 +142,36 @@ func setup() {
 	}
 	// winning path for history
 	anthology = history(cfg.History, wd)
-	if err := os.MkdirAll(anthology, 0755); err != nil {
-		stderrf("history path %s per working directory: %v", anthology, err)
-		exit(1)
+	if anthology != "" {
+		if err := os.MkdirAll(anthology, 0755); err != nil {
+			stderrf("history path %s per working directory: %v", anthology, err)
+			exit(1)
+		}
 	}
+}
+
+var errNoKeyring = errors.New("no keyring")
+
+func keyringFor(p config.Provider, c *config.Config) (keyring.Keyring, error) {
+	if c == nil {
+		c = cfg
+	}
+	var k config.Auth
+	for _, a := range c.Auth {
+		if a.Type != "keyring" {
+			continue
+		}
+		if p.Keyring != "" && p.Keyring == a.Name {
+			return auth.NewKeyring(a, &p)
+		}
+		if a.Default {
+			k = a
+		}
+	}
+	if k.Type == "" {
+		return nil, errNoKeyring
+	}
+	return auth.NewKeyring(k, &p)
 }
 
 func stderr(a ...interface{}) {

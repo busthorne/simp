@@ -1,15 +1,12 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/busthorne/keyring"
-	"github.com/busthorne/simp/auth"
 	"github.com/busthorne/simp/config"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -70,22 +67,6 @@ func (w *wizardState) writeConfig() error {
 	fpath := filepath.Join(w.configPath, "simp.hcl")
 	fmt.Printf("-> %s\n", fpath)
 	return os.WriteFile(fpath, b, 0755)
-}
-
-var errNoKeyring = errors.New("no keyring")
-
-func (w *wizardState) keyring(provider ...config.Provider) (keyring.Keyring, error) {
-	if len(w.Auth) == 0 {
-		return nil, errNoKeyring
-	}
-	if w.Auth[0].Backend == "config" {
-		return nil, errNoKeyring
-	}
-	var p *config.Provider = nil
-	if len(provider) > 0 {
-		p = &provider[0]
-	}
-	return auth.NewKeyring(w.Auth[0], p)
 }
 
 func (w *wizardState) defaultProviderName(driver string) string {

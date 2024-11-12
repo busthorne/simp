@@ -22,13 +22,13 @@ var (
 	Path string
 
 	// ErrUnsupported is returned when a driver does not support a method.
-	ErrUnsupported = errors.New("unsupported op")
+	ErrUnsupported = errors.New("not supported")
 	// ErrUnsupportedMime is usually returned when a driver does not support image type.
-	ErrUnsupportedMime = errors.New("unsupported mime type")
+	ErrUnsupportedMime = errors.New("mime type is not supported")
 	// ErrUnsupportedRole is returned when role is neither "user" nor "assistant".
-	ErrUnsupportedRole = errors.New("unsupported role")
+	ErrUnsupportedRole = errors.New("role is not supported")
 	// ErrNotFound is returned when a model or alias is not found.
-	ErrNotFound = errors.New("model or alias not found")
+	ErrNotFound = errors.New("model or alias is not found")
 )
 
 func init() {
