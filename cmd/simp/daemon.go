@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/signal"
+	"log"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -15,7 +13,7 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-func gateway() {
+func listen() *fiber.App {
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
@@ -135,25 +133,18 @@ func gateway() {
 		stderr("HTTPS is not supported yet.")
 		exit(1)
 	case "http":
-		fmt.Println(cfg.Daemon.BaseURL())
-
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		log.Println("listening on", cfg.Daemon.ListenAddr)
 		go func() {
 			if err := f.Listen(addr[1]); err != nil {
-				stderr("no listen:", err)
+				log.Fatal(err)
 				exit(1)
 			}
 		}()
-		<-sig
-		if err := f.Shutdown(); err != nil {
-			stderr("no shutdown:", err)
-			exit(1)
-		}
 	default:
 		stderr("unknown protocol:", addr[0])
 		exit(1)
 	}
+	return f
 }
 
 func badRequest(c *fiber.Ctx, err any) error {

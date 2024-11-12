@@ -6,15 +6,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"os/signal"
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/busthorne/keyring"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/auth"
 	"github.com/busthorne/simp/config"
+	"github.com/fsnotify/fsnotify"
 )
 
 var (
@@ -40,10 +44,19 @@ var (
 	bg = context.Background()
 )
 
+type stimulus chan struct{}
+
 func main() {
 	wave() // the flags
-	setup()
+	conflicts := mutuallyExclusive("configure", "apikey", "daemon", "historypath", "i")
+	if err := setup(); err != nil {
+		stderr("simp:", err)
+		exit(1)
+	}
 	switch {
+	case conflicts != nil:
+		stderr("mutually exclusive flags:", strings.Join(conflicts, ", "))
+		exit(1)
 	case *apikey:
 		wizardApikey()
 		return
@@ -51,8 +64,47 @@ func main() {
 		fmt.Println(anthology)
 		return
 	case *daemon:
-		gateway()
-		return
+		w, err := fsnotify.NewWatcher()
+		if err != nil {
+			stderr("failed to create watcher:", err)
+			exit(1)
+		}
+		defer w.Close()
+		w.Add(path.Join(simp.Path, "config"))
+
+		reload := make(stimulus)
+		go func() {
+			for e := range w.Events {
+				if e.Op == fsnotify.Write && strings.HasSuffix(e.Name, ".hcl") {
+					reload <- struct{}{}
+				}
+			}
+		}()
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		for {
+			f := listen()
+			for {
+				select {
+				case <-reload:
+					log.Println("config changed, reloading")
+				case <-sig:
+					return
+				}
+				if f != nil {
+					if err := f.Shutdown(); err != nil {
+						log.Fatal(err)
+					}
+					f = nil
+					log.Println("shutdown")
+				}
+				if err := setup(); err != nil {
+					stderr(err)
+					continue
+				}
+				break
+			}
+		}
 	}
 	defer saveHistory()
 	for {
@@ -110,44 +162,40 @@ func wave() {
 	}
 }
 
-func setup() {
+func setup() error {
 	p := path.Join(simp.Path, "config")
 	c, err := config.ParsePath(p)
 	if err != nil {
-		stderr("simp:", err)
 		for _, d := range c.Diagnostics {
 			for _, err := range d.Errs() {
 				stderr(err)
 			}
 		}
-		exit(1)
+		return err
 	}
 	if err := c.Validate(); err != nil {
-		stderrf("%s: %v\n", p, err)
-		exit(1)
+		return err
 	}
 	cfg = c
 	if model == "" {
 		if cfg.Default.Model == "" {
-			stderr("no default model")
-			exit(1)
+			return errors.New("no default model")
 		}
 		model = cfg.Default.Model
 	}
 	// get working directory
 	wd, err := os.Getwd()
 	if err != nil {
-		stderr("simp:", err)
-		exit(1)
+		return fmt.Errorf("get working directory: %w", err)
 	}
 	// winning path for history
 	anthology = history(cfg.History, wd)
 	if anthology != "" {
 		if err := os.MkdirAll(anthology, 0755); err != nil {
-			stderrf("history path %s per working directory: %v", anthology, err)
-			exit(1)
+			return fmt.Errorf("history path %s per working directory: %w", anthology, err)
 		}
 	}
+	return nil
 }
 
 var errNoKeyring = errors.New("no keyring")
@@ -194,4 +242,22 @@ func coalesce32(a ...*float64) float32 {
 		return float32(*v)
 	}
 	return 0
+}
+
+// mutuallyExclusive accepts the flags of which only one can be set,
+// and returns the names of the flags that were set, if there's
+// more than one such flag
+func mutuallyExclusive(flags ...string) []string {
+	var set []string
+	flag.Visit(func(f *flag.Flag) {
+		for _, flag := range flags {
+			if f.Name == flag {
+				set = append(set, "-"+f.Name)
+			}
+		}
+	})
+	if len(set) <= 1 {
+		return nil
+	}
+	return set
 }
