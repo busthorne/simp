@@ -67,7 +67,7 @@ func promptComplete() error {
 		PresencePenalty:  coalesce32(presencePenalty, cfg.Default.PresencePenalty, model.PresencePenalty),
 	})
 	if err != nil {
-		stderrf("complete: %v\n", err)
+		stderrf("%T %v\n", drv, err)
 		exit(1)
 	}
 	for chunk := range resp.Stream {

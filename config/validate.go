@@ -105,6 +105,14 @@ func (p *Provider) Validate() error {
 	}
 	err, collect := validate("")
 
+	if p.Driver == "vertex" {
+		if p.Project == "" {
+			collect(ø("project is required for vertex driver"))
+		}
+		if p.Region == "" {
+			collect(ø("region is required for vertex driver"))
+		}
+	}
 	for _, m := range p.Models {
 		collect(m.Validate(), ƒ(`model "%s" "%s"`, p.Name, m.Name))
 	}

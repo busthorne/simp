@@ -5,12 +5,16 @@ import (
 	"io"
 
 	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/config"
 	"github.com/sashabaranov/go-openai"
 )
 
 // NewOpenAI creates a new OpenAI client.
-func NewOpenAI(cfg openai.ClientConfig) *OpenAI {
-	return &OpenAI{Client: *openai.NewClientWithConfig(cfg)}
+func NewOpenAI(p config.Provider) (*OpenAI, error) {
+	c := openai.DefaultConfig(p.APIKey)
+	c.BaseURL = p.BaseURL
+	client := openai.NewClientWithConfig(c)
+	return &OpenAI{Client: *client, p: p}, nil
 }
 
 // OpenAI is the most basic kind of driver, because it's the API that we're emulating.
@@ -18,6 +22,7 @@ func NewOpenAI(cfg openai.ClientConfig) *OpenAI {
 // Big think!
 type OpenAI struct {
 	openai.Client
+	p config.Provider
 }
 
 func (o *OpenAI) List(ctx context.Context) ([]simp.Model, error) {
@@ -42,7 +47,7 @@ func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (c *simp.Compl
 
 	s, err := o.CreateChatCompletionStream(ctx, req)
 	if err != nil {
-		return c, err
+		return nil, err
 	}
 	c.Stream = make(chan openai.ChatCompletionStreamResponse)
 	go func() {

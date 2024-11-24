@@ -7,20 +7,21 @@ import (
 	"time"
 
 	"github.com/busthorne/simp/config"
-	"github.com/sashabaranov/go-openai"
 )
 
 const dialTimeout = time.Second
 
 // NewDaemon creates a daemon client for the simulating proxy.
-func NewDaemon(d config.Daemon) *Daemon {
-	baseUrl := d.BaseURL()
-	c := openai.DefaultConfig("")
-	c.BaseURL = baseUrl
-	return &Daemon{
-		OpenAI:  *NewOpenAI(c),
-		baseUrl: baseUrl,
+func NewDaemon(cfg config.Daemon) (*Daemon, error) {
+	baseUrl := cfg.BaseURL()
+	d, err := NewOpenAI(config.Provider{BaseURL: baseUrl})
+	if err != nil {
+		return nil, err
 	}
+	return &Daemon{
+		OpenAI:  *d,
+		baseUrl: baseUrl,
+	}, nil
 }
 
 // Daemon is the hairpin driver: basically, glorified IPC over HTTP.

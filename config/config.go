@@ -136,6 +136,10 @@ type Provider struct {
 	Keyring    string   `hcl:"keyring,optional"`
 	Models     []Model  `hcl:"model,block"`
 	AllowedIPs []string `hcl:"allowed_ips,optional"`
+
+	// Vertex
+	Project string `hcl:"project,optional"`
+	Region  string `hcl:"region,optional"`
 }
 
 // Model is a set of overrides passed to driver so that it can better

@@ -1,66 +1,70 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 
-	anthropic "github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
 	"github.com/busthorne/simp/driver"
-	"github.com/sashabaranov/go-openai"
-	gemini "google.golang.org/api/option"
 )
 
 // findWaldo will check if the daemon is configured, and will simply create a daemon driver;
 // if unsuccessful, it will search the configured models, cached models from provider lists,
 // and will try to refresh the outdated lists!
 func findWaldo(alias string) (simp.Driver, config.Model, error) {
+	m := config.Model{Name: alias}
 	if d := cfg.Daemon; !*daemon && d != nil {
-		drv := driver.NewDaemon(*d)
-		if err := drv.Ping(); err != nil {
-			stderr(err)
-		} else {
-			return drv, config.Model{Name: alias}, nil
+		drv, err := driver.NewDaemon(*d)
+		if err != nil {
+			return nil, m, fmt.Errorf("daemon driver: %w", err)
 		}
+		if err := drv.Ping(); err != nil {
+			return nil, m, fmt.Errorf("daemon ping: %w", err)
+		}
+		return drv, m, nil
 	}
 	m, p, ok := cfg.LookupModel(alias)
 	if ok {
-		return drive(p), m, nil
+		d, err := drive(p)
+		if err != nil {
+			return nil, m, fmt.Errorf("provider %s: %w", p.Name, err)
+		}
+		return d, m, nil
 	}
 	// TODO: search cache for model list
 	return nil, m, simp.ErrNotFound
 }
 
-func drive(p config.Provider) simp.Driver {
+func drive(p config.Provider) (d simp.Driver, err error) {
 	var apikey string
 	if p.APIKey == "" {
 		ring, err := keyringFor(p, cfg)
 		if err != nil {
-			stderr("keyring error:", err)
-			exit(1)
+			return nil, err
 		}
 		item, err := ring.Get("apikey")
 		if err != nil {
-			stderr("keyring read error:", err)
-			exit(1)
+			return nil, err
 		}
-		apikey = string(item.Data)
-	} else {
-		apikey = p.APIKey
+		p.APIKey = string(item.Data)
 	}
 	switch p.Driver {
 	case "openai":
-		c := openai.DefaultConfig(apikey)
-		c.BaseURL = p.BaseURL
-		return driver.NewOpenAI(c)
+		d, err = driver.NewOpenAI(p)
 	case "anthropic":
-		return driver.NewAnthropic(anthropic.WithAPIKey(apikey))
+		d, err = driver.NewAnthropic(p)
 	case "gemini":
-		return driver.NewGemini(gemini.WithAPIKey(apikey))
+		d, err = driver.NewGemini(p)
+	case "vertex":
+		b, _ := base64.StdEncoding.DecodeString(apikey)
+		if len(b) > 0 {
+			p.APIKey = string(b)
+		}
+		d, err = driver.NewVertex(p)
 	// case "dify":
 	default:
-		fmt.Printf("unsupported driver: %q\n", p.Driver)
-		exit(1)
+		err = fmt.Errorf(`unsupported driver "%s"`, p.Driver)
 	}
-	return nil
+	return
 }

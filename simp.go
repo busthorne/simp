@@ -21,8 +21,8 @@ var (
 	// Path is $SIMPPATH defaulting to $HOME/.simp
 	Path string
 
-	// ErrUnsupported is returned when a driver does not support a method.
-	ErrUnsupported = errors.New("not supported")
+	// ErrNotImplemented is returned when a driver does not support a method.
+	ErrNotImplemented = errors.New("not implemented")
 	// ErrUnsupportedMime is usually returned when a driver does not support image type.
 	ErrUnsupportedMime = errors.New("mime type is not supported")
 	// ErrUnsupportedRole is returned when role is neither "user" nor "assistant".

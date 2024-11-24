@@ -17,8 +17,7 @@ func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, e
 	id := "simp_" + auth.Name
 	ring, ok := rings[id]
 	if !ok {
-		var err error
-		ring, err = keyring.Open(keyring.Config{
+		r, err := keyring.Open(keyring.Config{
 			AllowedBackends:                []keyring.BackendType{keyring.BackendType(auth.Backend)},
 			ServiceName:                    "simp_" + auth.Name,
 			KeyCtlScope:                    "user",
@@ -35,19 +34,24 @@ func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, e
 		if err != nil {
 			return nil, err
 		}
-		rings[id] = ring
+		ring = r
+		rings[id] = r
 	}
-	k := &Keyring{ring, ""}
+	k := &Keyring{ring, "", make(keyringCache)}
 	if provider != nil {
 		k.prefix = provider.Driver + "/" + provider.Name + "/"
 	}
 	return k, nil
 }
 
+type keyringCache = map[string]keyring.Item
+
 // Keyring provides a per-provider view of a keyring.
 type Keyring struct {
 	ring   keyring.Keyring
 	prefix string
+
+	cache keyringCache
 }
 
 func (k *Keyring) rewrite(key string) string {
@@ -55,11 +59,15 @@ func (k *Keyring) rewrite(key string) string {
 }
 
 func (k *Keyring) Get(key string) (keyring.Item, error) {
+	if item, ok := k.cache[key]; ok {
+		return item, nil
+	}
 	item, err := k.ring.Get(k.prefix + key)
 	if err != nil {
 		return keyring.Item{}, err
 	}
 	item.Key = k.rewrite(item.Key)
+	k.cache[key] = item
 	return item, nil
 }
 
@@ -74,10 +82,16 @@ func (k *Keyring) GetMetadata(key string) (keyring.Metadata, error) {
 
 func (k *Keyring) Set(item keyring.Item) error {
 	item.Key = k.prefix + item.Key
-	return k.ring.Set(item)
+	err := k.ring.Set(item)
+	if err != nil {
+		return err
+	}
+	k.cache[item.Key] = item
+	return nil
 }
 
 func (k *Keyring) Remove(key string) error {
+	delete(k.cache, key)
 	return k.ring.Remove(k.prefix + key)
 }
 

@@ -10,17 +10,21 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/config"
 	"github.com/sashabaranov/go-openai"
 )
 
 // NewAnthropic creates a new Anthropic client.
-func NewAnthropic(opts ...option.RequestOption) *Anthropic {
-	return &Anthropic{Client: *anthropic.NewClient(opts...)}
+func NewAnthropic(p config.Provider) (*Anthropic, error) {
+	cli := anthropic.NewClient(option.WithAPIKey(p.APIKey))
+	return &Anthropic{Client: *cli, p: p}, nil
 }
 
 // Anthropic implements the driver interface for Anthropic's API
 type Anthropic struct {
 	anthropic.Client
+
+	p config.Provider
 }
 
 func (a *Anthropic) List(ctx context.Context) ([]simp.Model, error) {
@@ -35,7 +39,7 @@ func (a *Anthropic) List(ctx context.Context) ([]simp.Model, error) {
 }
 
 func (a *Anthropic) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, err error) {
-	err = simp.ErrUnsupported
+	err = simp.ErrNotImplemented
 	return
 }
 

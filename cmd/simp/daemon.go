@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	"github.com/busthorne/simp"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/log"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/sashabaranov/go-openai"
 )
@@ -18,6 +20,24 @@ func listen() *fiber.App {
 		DisableStartupMessage: true,
 	})
 	f.Use(cors.New())
+	f.Use(func(c *fiber.Ctx) (err error) {
+		if err = c.Next(); err == nil {
+			return
+		}
+		log.Errorf("%s %s %v\n", c.Method(), c.Path(), err)
+		var errType = "invalid_request_error"
+		if un := errors.Unwrap(err); un != nil {
+			err = un
+		}
+		switch err := err.(type) {
+		case *openai.APIError:
+			errType = err.Type
+		}
+		return c.JSON(fiber.Map{"error": fiber.Map{
+			"message": err.Error(),
+			"type":    errType,
+		}})
+	})
 	v1 := f.Group("/v1")
 	v1.Get("/ping", func(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -39,9 +59,7 @@ func listen() *fiber.App {
 				}
 			}
 		}
-		return c.JSON(openai.ModelsList{
-			Models: models,
-		})
+		return c.JSON(openai.ModelsList{Models: models})
 	})
 	v1.Post("/embeddings", func(c *fiber.Ctx) error {
 		var req openai.EmbeddingRequest
@@ -52,6 +70,7 @@ func listen() *fiber.App {
 		if err != nil {
 			return badRequest(c, err)
 		}
+		log.Debugf("embedding model %s (%T)\n", model.Name, drv)
 		req.Model = openai.EmbeddingModel(model.Name)
 		resp, err := drv.Embed(c.Context(), req)
 		if err != nil {
@@ -68,6 +87,7 @@ func listen() *fiber.App {
 		if err != nil {
 			return badRequest(c, err)
 		}
+		log.Debugf("completion model %s (%T)\n", model.Name, drv)
 		req.Model = model.Name
 		resp, err := drv.Complete(c.Context(), req)
 		if err != nil {
@@ -116,43 +136,45 @@ func listen() *fiber.App {
 		return nil
 	})
 	v1.Get("/batches", func(c *fiber.Ctx) error {
-		return badRequest(c, "not implemented")
+		return notImplemented(c)
 	})
 	v1.Get("/batches/:id", func(c *fiber.Ctx) error {
-		return badRequest(c, "not implemented")
+		return notImplemented(c)
 	})
 	v1.Post("/batches", func(c *fiber.Ctx) error {
-		return badRequest(c, "not implemented")
+		return notImplemented(c)
 	})
 	v1.Post("/batches/:id/cancel", func(c *fiber.Ctx) error {
-		return badRequest(c, "not implemented")
+		return notImplemented(c)
 	})
 	addr := strings.Split(cfg.Daemon.ListenAddr, "://")
 	switch addr[0] {
 	case "https":
-		stderr("HTTPS is not supported yet.")
-		exit(1)
+		log.Fatal("HTTPS is not supported yet.")
 	case "http":
-		log.Println("listening on", cfg.Daemon.ListenAddr)
+		log.Infof("listening on %s\n", cfg.Daemon.ListenAddr)
 		go func() {
 			if err := f.Listen(addr[1]); err != nil {
 				log.Fatal(err)
-				exit(1)
 			}
 		}()
 	default:
-		stderr("unknown protocol:", addr[0])
-		exit(1)
+		log.Fatalf("unknown protocol: %s\n", addr[0])
 	}
 	return f
 }
 
-func badRequest(c *fiber.Ctx, err any) error {
-	return c.Status(fiber.StatusBadRequest).
-		JSON(openai.APIError{Type: "error", Message: fmt.Sprintf("%s", err)})
+func badRequest(c *fiber.Ctx, err error) error {
+	c.Status(fiber.StatusBadRequest)
+	return err
 }
 
-func internalError(c *fiber.Ctx, err any) error {
-	return c.Status(fiber.StatusInternalServerError).
-		JSON(fiber.Map{"error": err})
+func internalError(c *fiber.Ctx, err error) error {
+	c.Status(fiber.StatusInternalServerError)
+	return err
+}
+
+func notImplemented(c *fiber.Ctx) error {
+	c.Status(fiber.StatusNotImplemented)
+	return simp.ErrNotImplemented
 }

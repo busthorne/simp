@@ -25,6 +25,7 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 	- [x] OpenAI
 	- [x] Anthropic
 	- [x] Gemini
+	- [x] Vertex
 	- [x] [Dify][10]
 - [x] Keychains
 - [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format

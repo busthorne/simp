@@ -20,11 +20,11 @@ type Dify struct {
 }
 
 func (o *Dify) List(ctx context.Context) ([]simp.Model, error) {
-	return nil, simp.ErrUnsupported
+	return nil, simp.ErrNotImplemented
 }
 
 func (o *Dify) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, err error) {
-	err = simp.ErrUnsupported
+	err = simp.ErrNotImplemented
 	return
 }
 

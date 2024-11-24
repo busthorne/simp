@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"path"
@@ -19,6 +18,7 @@ import (
 	"github.com/busthorne/simp/auth"
 	"github.com/busthorne/simp/config"
 	"github.com/fsnotify/fsnotify"
+	"github.com/gofiber/fiber/v2/log"
 )
 
 var (
@@ -29,6 +29,7 @@ var (
 	vim              = flag.Bool("vim", false, "vim mode")
 	historypath      = flag.Bool("historypath", false, "display history path per current location")
 	interactive      = flag.Bool("i", false, "interactive mode")
+	verbose          = flag.Bool("v", false, "verbose output")
 	lessThan         = flag.Int("lt", 0, "less than this many tokens")
 	temperature      = flag.Float64("t", 0.7, "temperature")
 	topP             = flag.Float64("p", 1.0, "top_p sampling")
@@ -53,6 +54,7 @@ func main() {
 		stderr("simp:", err)
 		exit(1)
 	}
+	log.SetLevel(log.LevelInfo)
 	switch {
 	case conflicts != nil:
 		stderr("mutually exclusive flags:", strings.Join(conflicts, ", "))
@@ -64,6 +66,9 @@ func main() {
 		fmt.Println(anthology)
 		return
 	case *daemon:
+		if *verbose {
+			log.SetLevel(log.LevelDebug)
+		}
 		w, err := fsnotify.NewWatcher()
 		if err != nil {
 			stderr("failed to create watcher:", err)
@@ -87,7 +92,7 @@ func main() {
 			for {
 				select {
 				case <-reload:
-					log.Println("config changed, reloading")
+					log.Info("config changed, reloading")
 				case <-sig:
 					return
 				}
@@ -96,7 +101,7 @@ func main() {
 						log.Fatal(err)
 					}
 					f = nil
-					log.Println("shutdown")
+					log.Info("shutdown")
 				}
 				if err := setup(); err != nil {
 					stderr(err)

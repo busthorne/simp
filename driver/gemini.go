@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/config"
 	genai "github.com/google/generative-ai-go/genai"
 	"github.com/sashabaranov/go-openai"
 	"google.golang.org/api/iterator"
@@ -13,13 +14,16 @@ import (
 )
 
 // NewGemini creates a new Gemini client.
-func NewGemini(opts ...option.ClientOption) *Gemini {
-	return &Gemini{opts: opts}
+func NewGemini(p config.Provider) (*Gemini, error) {
+	g := &Gemini{p: p}
+	g.options = append(g.options, option.WithAPIKey(p.APIKey))
+	return g, nil
 }
 
 // Gemini implements the driver interface for Google's Gemini API
 type Gemini struct {
-	opts []option.ClientOption
+	options []option.ClientOption
+	p       config.Provider
 }
 
 func (g *Gemini) List(ctx context.Context) ([]simp.Model, error) {
@@ -31,12 +35,12 @@ func (g *Gemini) List(ctx context.Context) ([]simp.Model, error) {
 }
 
 func (g *Gemini) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, err error) {
-	err = simp.ErrUnsupported
+	err = simp.ErrNotImplemented
 	return
 }
 
 func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (*simp.Completion, error) {
-	client, err := genai.NewClient(ctx, g.opts...)
+	client, err := genai.NewClient(ctx, g.options...)
 	if err != nil {
 		return nil, err
 	}
