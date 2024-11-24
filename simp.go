@@ -2,6 +2,7 @@ package simp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,7 +15,9 @@ type Driver interface {
 	List(context.Context) ([]Model, error)
 	Embed(context.Context, Embed) (Embeddings, error)
 	Complete(context.Context, Complete) (*Completion, error)
-	// CompleteBatch(context.Context, []Complete) ([]Completion, error)
+}
+
+type BatchDriver interface {
 }
 
 var (
@@ -54,6 +57,19 @@ type Completion struct {
 	Stream chan openai.ChatCompletionStreamResponse `json:"-"`
 
 	Err error `json:"-"`
+}
+
+type Batch []BatchRequest
+
+type BatchRequest struct {
+	ID        string `json:"custom_id"`
+	Method    string `json:"method"`
+	URL       string `json:"url"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+
+	Body     json.RawMessage `json:"body,omitempty"`
+	Embed    *Embed          `json:"embed,omitempty"`
+	Complete *Complete       `json:"complete,omitempty"`
 }
 
 // Map runs `f` on each element of `a` and returns a slice of the results.

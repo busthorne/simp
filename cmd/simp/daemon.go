@@ -24,6 +24,9 @@ func listen() *fiber.App {
 		if err = c.Next(); err == nil {
 			return
 		}
+		if c.Response().StatusCode() == fiber.StatusOK {
+			c.Status(fiber.StatusBadRequest)
+		}
 		log.Errorf("%s %s %v\n", c.Method(), c.Path(), err)
 		var errType = "invalid_request_error"
 		if un := errors.Unwrap(err); un != nil {
@@ -64,11 +67,11 @@ func listen() *fiber.App {
 	v1.Post("/embeddings", func(c *fiber.Ctx) error {
 		var req openai.EmbeddingRequest
 		if err := c.BodyParser(&req); err != nil {
-			return badRequest(c, err)
+			return err
 		}
 		drv, model, err := findWaldo(string(req.Model))
 		if err != nil {
-			return badRequest(c, err)
+			return err
 		}
 		log.Debugf("embedding model %s (%T)\n", model.Name, drv)
 		req.Model = openai.EmbeddingModel(model.Name)
@@ -81,11 +84,11 @@ func listen() *fiber.App {
 	v1.Post("/chat/completions", func(c *fiber.Ctx) error {
 		var req openai.ChatCompletionRequest
 		if err := c.BodyParser(&req); err != nil {
-			return badRequest(c, err)
+			return err
 		}
 		drv, model, err := findWaldo(req.Model)
 		if err != nil {
-			return badRequest(c, err)
+			return err
 		}
 		log.Debugf("completion model %s (%T)\n", model.Name, drv)
 		req.Model = model.Name
@@ -135,6 +138,7 @@ func listen() *fiber.App {
 		})
 		return nil
 	})
+	v1.Post("/files", batchUpload)
 	v1.Get("/batches", func(c *fiber.Ctx) error {
 		return notImplemented(c)
 	})
@@ -162,11 +166,6 @@ func listen() *fiber.App {
 		log.Fatalf("unknown protocol: %s\n", addr[0])
 	}
 	return f
-}
-
-func badRequest(c *fiber.Ctx, err error) error {
-	c.Status(fiber.StatusBadRequest)
-	return err
 }
 
 func internalError(c *fiber.Ctx, err error) error {
