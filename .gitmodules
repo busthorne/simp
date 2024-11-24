@@ -1,0 +1,3 @@
+[submodule "go-openai"]
+	path = go-openai
+	url = https://github.com/busthorne/go-openai

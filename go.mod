@@ -4,6 +4,8 @@ go 1.23
 
 toolchain go1.23.2
 
+replace github.com/sashabaranov/go-openai => ./go-openai
+
 require (
 	cloud.google.com/go/vertexai v0.13.2
 	github.com/anthropics/anthropic-sdk-go v0.2.0-alpha.4
