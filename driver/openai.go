@@ -12,7 +12,9 @@ import (
 // NewOpenAI creates a new OpenAI client.
 func NewOpenAI(p config.Provider) (*OpenAI, error) {
 	c := openai.DefaultConfig(p.APIKey)
-	c.BaseURL = p.BaseURL
+	if p.BaseURL != "" {
+		c.BaseURL = p.BaseURL
+	}
 	client := openai.NewClientWithConfig(c)
 	return &OpenAI{Client: *client, p: p}, nil
 }
