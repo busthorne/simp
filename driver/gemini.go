@@ -39,7 +39,7 @@ func (g *Gemini) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, 
 	return
 }
 
-func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (c simp.Completion, err error) {
+func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (c simp.Completions, err error) {
 	client, err := genai.NewClient(ctx, g.options...)
 	if err != nil {
 		return c, err

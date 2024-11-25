@@ -1,7 +1,11 @@
 package driver
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
@@ -15,7 +19,7 @@ func NewOpenAI(p config.Provider) (*OpenAI, error) {
 		c.BaseURL = p.BaseURL
 	}
 	client := openai.NewClientWithConfig(c)
-	return &OpenAI{Client: *client, p: p}, nil
+	return &OpenAI{*client, p}, nil
 }
 
 // OpenAI is the most basic kind of driver, because it's the API that we're emulating.
@@ -23,11 +27,11 @@ func NewOpenAI(p config.Provider) (*OpenAI, error) {
 // Big think!
 type OpenAI struct {
 	openai.Client
-	p config.Provider
+	config.Provider
 }
 
 func (o *OpenAI) List(ctx context.Context) ([]simp.Model, error) {
-	models, err := o.Client.ListModels(ctx)
+	models, err := o.ListModels(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -35,9 +39,117 @@ func (o *OpenAI) List(ctx context.Context) ([]simp.Model, error) {
 }
 
 func (o *OpenAI) Embed(ctx context.Context, req simp.Embed) (simp.Embeddings, error) {
-	return o.Client.CreateEmbeddings(ctx, req)
+	return o.CreateEmbeddings(ctx, req)
 }
 
-func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (simp.Completion, error) {
-	return o.Client.CreateChatCompletion(ctx, req)
+func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (simp.Completions, error) {
+	return o.CreateChatCompletion(ctx, req)
+}
+
+func (o *OpenAI) BatchUpload(ctx context.Context, batch *simp.Batch, inputs []simp.BatchInput) error {
+	switch {
+	case o.BaseURL != "" && !o.BatchAPI:
+		return simp.ErrNotImplemented
+	case len(inputs) == 0:
+		return simp.ErrNotFound
+	}
+	completing := inputs[0].C.Model != ""
+	if completing {
+		batch.Endpoint = chatCompletions
+	} else {
+		batch.Endpoint = embeddings
+	}
+	b := bytes.Buffer{}
+	w := json.NewEncoder(&b)
+	for _, input := range inputs {
+		if completing {
+			req := openai.BatchChatCompletionRequest{
+				CustomID: input.ID,
+				Body:     input.C,
+				Method:   "POST",
+				URL:      chatCompletions,
+			}
+			w.Encode(req)
+		} else {
+			req := openai.BatchEmbeddingRequest{
+				CustomID: input.ID,
+				Body:     input.E,
+				Method:   "POST",
+				URL:      embeddings,
+			}
+			w.Encode(req)
+		}
+	}
+	f, err := o.CreateFileBytes(ctx, openai.FileBytesRequest{
+		Name:    "batch.jsonl",
+		Bytes:   b.Bytes(),
+		Purpose: openai.PurposeBatch,
+	})
+	if err != nil {
+		return fmt.Errorf("upstream: %w", err)
+	}
+	batch.InputFileID = f.ID
+	return nil
+}
+
+func (o *OpenAI) BatchSend(ctx context.Context, batch *simp.Batch) error {
+	if batch.InputFileID == "" {
+		panic("no input file id")
+	}
+	b, err := o.CreateBatch(ctx, openai.CreateBatchRequest{
+		InputFileID:      batch.InputFileID,
+		Endpoint:         batch.Endpoint,
+		CompletionWindow: "24h",
+	})
+	if err != nil {
+		return fmt.Errorf("upstream: %w", err)
+	}
+	*batch = b.Batch
+	return nil
+}
+
+func (o *OpenAI) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
+	b, err := o.RetrieveBatch(ctx, batch.ID)
+	if err != nil {
+		return fmt.Errorf("upstream: %w", err)
+	}
+	*batch = b.Batch
+	return nil
+}
+
+func (o *OpenAI) BatchReceive(ctx context.Context, batch *simp.Batch) (outputs []simp.BatchOutput, err error) {
+	if batch.OutputFileID == nil {
+		return nil, simp.ErrBatchIncomplete
+	}
+	f, err := o.GetFileContent(ctx, *batch.OutputFileID)
+	if err != nil {
+		return nil, fmt.Errorf("upstream: %w", err)
+	}
+	r := json.NewDecoder(f)
+	for {
+		var output simp.BatchOutput
+		var err error
+		if batch.Endpoint == chatCompletions {
+			err = r.Decode(&output.C)
+		} else {
+			err = r.Decode(&output.E)
+		}
+		switch err {
+		case nil:
+			outputs = append(outputs, output)
+		case io.EOF:
+			return outputs, nil
+		default:
+			return nil, fmt.Errorf("upstream: %w", err)
+		}
+	}
+}
+
+func (o *OpenAI) BatchCancel(ctx context.Context, batch *simp.Batch) error {
+	b, err := o.CancelBatch(ctx, batch.ID)
+	if err != nil {
+		return fmt.Errorf("upstream: %w", err)
+	}
+	*batch = b.Batch
+	return nil
 }

@@ -28,8 +28,8 @@ func (o *Dify) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, er
 	return
 }
 
-func (o *Dify) Complete(ctx context.Context, req simp.Complete) (*simp.Completion, error) {
-	c := &simp.Completion{}
+func (o *Dify) Complete(ctx context.Context, req simp.Complete) (*simp.Completions, error) {
+	c := &simp.Completions{}
 	// TODO: get user, conversation_id from some state
 	difyReq := &dify.ChatMessageRequest{
 		Inputs:         map[string]any{},

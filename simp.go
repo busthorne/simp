@@ -11,13 +11,13 @@ import (
 
 // I hate long type names.
 type (
-	Context    = context.Context
-	Model      = openai.Model
-	Complete   = openai.ChatCompletionRequest
-	Completion = openai.ChatCompletionResponse
-	Embed      = openai.EmbeddingRequest
-	Embeddings = openai.EmbeddingResponse
-	Batch      = openai.Batch
+	Context     = context.Context
+	Model       = openai.Model
+	Complete    = openai.ChatCompletionRequest
+	Completions = openai.ChatCompletionResponse
+	Embed       = openai.EmbeddingRequest
+	Embeddings  = openai.EmbeddingResponse
+	Batch       = openai.Batch
 )
 
 var (
@@ -32,6 +32,8 @@ var (
 	ErrUnsupportedRole = errors.New("role is not supported")
 	// ErrNotFound is returned when a model or alias is not found.
 	ErrNotFound = errors.New("model or alias is not found")
+	// ErrBatchIncomplete is returned when a batch is not completed.
+	ErrBatchIncomplete = errors.New("batch is incomplete")
 )
 
 func init() {

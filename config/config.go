@@ -136,6 +136,7 @@ type Provider struct {
 	Keyring    string   `hcl:"keyring,optional"`
 	Models     []Model  `hcl:"model,block"`
 	AllowedIPs []string `hcl:"allowed_ips,optional"`
+	BatchAPI   bool     `hcl:"batch_api,optional"`
 
 	// Vertex
 	Project string `hcl:"project,optional"`

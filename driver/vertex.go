@@ -46,7 +46,7 @@ func (v *Vertex) Embed(ctx context.Context, req simp.Embed) (simp.Embeddings, er
 	return simp.Embeddings{}, simp.ErrNotImplemented
 }
 
-func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Completion, err error) {
+func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Completions, err error) {
 	client, err := v.client(ctx)
 	if err != nil {
 		return c, err

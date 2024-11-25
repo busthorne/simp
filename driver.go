@@ -4,7 +4,7 @@ package simp
 type Driver interface {
 	List(Context) ([]Model, error)
 	Embed(Context, Embed) (Embeddings, error)
-	Complete(Context, Complete) (Completion, error)
+	Complete(Context, Complete) (Completions, error)
 }
 
 // BatchDriver is a driver that supports some variant of Batch API.
@@ -12,7 +12,7 @@ type Driver interface {
 // Think OpenAI, Anthropic, Vertex, etc.
 type BatchDriver interface {
 	// Usually: validate input and upload vendor-specific JSONL
-	BatchCreate(Context, *Batch, []BatchInput) error
+	BatchUpload(Context, *Batch, []BatchInput) error
 	// Schedule the batch for execution with the provider
 	BatchSend(Context, *Batch) error
 	// Update the status on the batch
@@ -23,13 +23,15 @@ type BatchDriver interface {
 	BatchCancel(Context, *Batch) error
 }
 
+// BatchInput is a union type of possible batch inputs.
 type BatchInput struct {
-	ID       string
-	Complete Complete
-	Embed    Embed
+	ID string
+	C  Complete
+	E  Embed
 }
 
+// BatchOutput is a union type of possible batch outputs.
 type BatchOutput struct {
-	Completion Completion
-	Embeddings Embeddings
+	C Completions
+	E Embeddings
 }

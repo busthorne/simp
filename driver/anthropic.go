@@ -36,7 +36,7 @@ func (a *Anthropic) Embed(ctx context.Context, req simp.Embed) (e simp.Embedding
 	return
 }
 
-func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c simp.Completion, ret error) {
+func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c simp.Completions, ret error) {
 	// Convert messages to Anthropic format
 	messages := []anthropic.MessageParam{}
 	system := ""
