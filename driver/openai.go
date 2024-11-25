@@ -46,14 +46,14 @@ func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (simp.Completi
 	return o.CreateChatCompletion(ctx, req)
 }
 
-func (o *OpenAI) BatchUpload(ctx context.Context, batch *simp.Batch, inputs []simp.BatchInput) error {
+func (o *OpenAI) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Magazine) error {
 	switch {
 	case o.BaseURL != "" && !o.BatchAPI:
 		return simp.ErrNotImplemented
-	case len(inputs) == 0:
+	case len(mag) == 0:
 		return simp.ErrNotFound
 	}
-	completing := inputs[0].C.Model != ""
+	completing := mag[0].Cin != nil
 	if completing {
 		batch.Endpoint = chatCompletions
 	} else {
@@ -61,23 +61,27 @@ func (o *OpenAI) BatchUpload(ctx context.Context, batch *simp.Batch, inputs []si
 	}
 	b := bytes.Buffer{}
 	w := json.NewEncoder(&b)
-	for _, input := range inputs {
+	for i, u := range mag {
+		var err error
 		if completing {
 			req := openai.BatchChatCompletionRequest{
-				CustomID: input.ID,
-				Body:     input.C,
+				CustomID: u.Id,
+				Body:     *u.Cin,
 				Method:   "POST",
 				URL:      chatCompletions,
 			}
-			w.Encode(req)
+			err = w.Encode(req)
 		} else {
 			req := openai.BatchEmbeddingRequest{
-				CustomID: input.ID,
-				Body:     input.E,
+				CustomID: u.Id,
+				Body:     *u.Ein,
 				Method:   "POST",
 				URL:      embeddings,
 			}
-			w.Encode(req)
+			err = w.Encode(req)
+		}
+		if err != nil {
+			return fmt.Errorf("magazine/%d: %w", i, err)
 		}
 	}
 	f, err := o.CreateFileBytes(ctx, openai.FileBytesRequest{
@@ -117,7 +121,7 @@ func (o *OpenAI) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
 	return nil
 }
 
-func (o *OpenAI) BatchReceive(ctx context.Context, batch *simp.Batch) (outputs []simp.BatchOutput, err error) {
+func (o *OpenAI) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.Magazine, err error) {
 	if batch.OutputFileID == nil {
 		return nil, simp.ErrBatchIncomplete
 	}
@@ -126,21 +130,21 @@ func (o *OpenAI) BatchReceive(ctx context.Context, batch *simp.Batch) (outputs [
 		return nil, fmt.Errorf("upstream: %w", err)
 	}
 	r := json.NewDecoder(f)
-	for {
-		var output simp.BatchOutput
+	for i := 0; ; i++ {
+		var u simp.BatchUnion
 		var err error
 		if batch.Endpoint == chatCompletions {
-			err = r.Decode(&output.C)
+			err = r.Decode(&u.Cout)
 		} else {
-			err = r.Decode(&output.E)
+			err = r.Decode(&u.Eout)
 		}
 		switch err {
 		case nil:
-			outputs = append(outputs, output)
+			mag = append(mag, u)
 		case io.EOF:
-			return outputs, nil
+			return mag, nil
 		default:
-			return nil, fmt.Errorf("upstream: %w", err)
+			return nil, fmt.Errorf("magazine/%d: %w", i, err)
 		}
 	}
 }

@@ -12,26 +12,25 @@ type Driver interface {
 // Think OpenAI, Anthropic, Vertex, etc.
 type BatchDriver interface {
 	// Usually: validate input and upload vendor-specific JSONL
-	BatchUpload(Context, *Batch, []BatchInput) error
+	BatchUpload(Context, *Batch, Magazine) error
 	// Schedule the batch for execution with the provider
 	BatchSend(Context, *Batch) error
 	// Update the status on the batch
 	BatchRefresh(Context, *Batch) error
 	// Usually: download the file (JSONL) and convert to OpenAI format
-	BatchReceive(Context, *Batch) ([]BatchOutput, error)
+	BatchReceive(Context, *Batch) (Magazine, error)
 	// Cancel the batch, if possible
 	BatchCancel(Context, *Batch) error
 }
 
-// BatchInput is a union type of possible batch inputs.
-type BatchInput struct {
-	ID string
-	C  Complete
-	E  Embed
+// BatchUnion is a union type of possible batch inputs and outputs.
+type BatchUnion struct {
+	Id   string
+	Cin  *Complete
+	Ein  *Embed
+	Cout *Completions
+	Eout *Embeddings
 }
 
-// BatchOutput is a union type of possible batch outputs.
-type BatchOutput struct {
-	C Completions
-	E Embeddings
-}
+// Magazine is a batch content-vector: one shoe fits all.
+type Magazine []BatchUnion
