@@ -45,14 +45,14 @@ func (o *Dify) Complete(ctx context.Context, req simp.Complete) (*simp.Completio
 		if err != nil {
 			return c, err
 		}
-		c.Stream = make(chan openai.ChatCompletionStreamResponse)
+		c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 		go func() {
 			defer close(c.Stream)
 			for chunk := range resp {
 				if err := chunk.Err; err != nil {
-					c.Err = err
 					c.Stream <- openai.ChatCompletionStreamResponse{
 						Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "error"}},
+						Error:   err,
 					}
 					return
 				}

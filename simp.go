@@ -2,7 +2,6 @@ package simp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,15 +9,16 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-// Driver is a roughly OpenAI-compatible inference backend.
-type Driver interface {
-	List(context.Context) ([]Model, error)
-	Embed(context.Context, Embed) (Embeddings, error)
-	Complete(context.Context, Complete) (*Completion, error)
-}
-
-type BatchDriver interface {
-}
+// I hate long type names.
+type (
+	Context    = context.Context
+	Model      = openai.Model
+	Complete   = openai.ChatCompletionRequest
+	Completion = openai.ChatCompletionResponse
+	Embed      = openai.EmbeddingRequest
+	Embeddings = openai.EmbeddingResponse
+	Batch      = openai.Batch
+)
 
 var (
 	// Path is $SIMPPATH defaulting to $HOME/.simp
@@ -39,37 +39,6 @@ func init() {
 	if Path == "" {
 		Path = filepath.Join(os.Getenv("HOME"), ".simp")
 	}
-}
-
-// I hate long type names.
-type (
-	Model      = openai.Model
-	Complete   = openai.ChatCompletionRequest
-	Embed      = openai.EmbeddingRequest
-	Embeddings = openai.EmbeddingResponse
-)
-
-// Completion is like openai.ChatCompletionResponse if it did streaming well.
-//
-// It was always a horrible idea to have two of them.
-type Completion struct {
-	openai.ChatCompletionResponse
-	Stream chan openai.ChatCompletionStreamResponse `json:"-"`
-
-	Err error `json:"-"`
-}
-
-type Batch []BatchRequest
-
-type BatchRequest struct {
-	ID        string `json:"custom_id"`
-	Method    string `json:"method"`
-	URL       string `json:"url"`
-	MaxTokens int    `json:"max_tokens,omitempty"`
-
-	Body     json.RawMessage `json:"body,omitempty"`
-	Embed    *Embed          `json:"embed,omitempty"`
-	Complete *Complete       `json:"complete,omitempty"`
 }
 
 // Map runs `f` on each element of `a` and returns a slice of the results.

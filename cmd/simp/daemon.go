@@ -74,7 +74,7 @@ func listen() *fiber.App {
 			return err
 		}
 		log.Debugf("embedding model %s (%T)\n", model.Name, drv)
-		req.Model = openai.EmbeddingModel(model.Name)
+		req.Model = model.Name
 		resp, err := drv.Embed(c.Context(), req)
 		if err != nil {
 			return internalError(c, err)
@@ -105,19 +105,17 @@ func listen() *fiber.App {
 		c.Set("Transfer-Encoding", "chunked")
 		c.Status(200)
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			var ret error
 			for ch := range resp.Stream {
 				c := ch.Choices[0]
 
-				var delta openai.ChatCompletionStreamChoiceDelta
-				switch c.FinishReason {
-				case "":
-					delta = openai.ChatCompletionStreamChoiceDelta{
-						Role:    "assistant",
-						Content: c.Delta.Content,
-					}
-				case "error":
-					goto done
-				default:
+				if c.FinishReason == "error" {
+					ret = ch.Error
+					break
+				}
+				delta := openai.ChatCompletionStreamChoiceDelta{
+					Role:    "assistant",
+					Content: c.Delta.Content,
 				}
 				fmt.Fprint(w, "data: ")
 				json.NewEncoder(w).Encode(openai.ChatCompletionStreamResponse{
@@ -127,13 +125,23 @@ func listen() *fiber.App {
 						Delta:        delta}},
 					Created: time.Now().Unix(),
 				})
-				fmt.Fprintln(w)
 				w.Flush()
 			}
-		done:
-			fmt.Fprintln(w)
+			switch err := ret.(type) {
+			case nil:
+			case *openai.APIError:
+				fmt.Fprintf(w, "\ndata: ")
+				json.NewEncoder(w).Encode(openai.ErrorResponse{Error: err})
+			default:
+				fmt.Fprintf(w, "\ndata: ")
+				json.NewEncoder(w).Encode(openai.ErrorResponse{
+					Error: &openai.APIError{
+						Type:    "provider_error",
+						Message: err.Error(),
+					},
+				})
+			}
 			fmt.Fprintf(w, "data: [DONE]\n")
-			fmt.Fprintln(w)
 			w.Flush()
 		})
 		return nil

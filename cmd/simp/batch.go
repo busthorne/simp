@@ -8,7 +8,6 @@ import (
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
 	"github.com/gofiber/fiber/v2"
-	"github.com/sashabaranov/go-openai"
 )
 
 var (
@@ -16,6 +15,19 @@ var (
 	errBadMethod   = fmt.Errorf("POST method is required")
 	errMeatNorFish = fmt.Errorf("neither a chat completion nor an embedding")
 )
+
+type BatchRequest struct {
+	ID        string `json:"custom_id"`
+	Method    string `json:"method"`
+	URL       string `json:"url"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+
+	Body     json.RawMessage `json:"body,omitempty"`
+	Embed    simp.Embed      `json:"-"`
+	Complete simp.Complete   `json:"-"`
+}
+
+type BatchRequests []BatchRequest
 
 func batchUpload(c *fiber.Ctx) error {
 	switch purpose := c.FormValue("purpose"); purpose {
@@ -33,10 +45,10 @@ func batchUpload(c *fiber.Ctx) error {
 	}
 	defer f.Close()
 	by := map[string]config.Provider{}
-	batches := map[string]simp.Batch{}
+	batches := map[string]BatchRequests{}
 	lines := json.NewDecoder(f)
 	for i := 1; ; i++ {
-		var req simp.BatchRequest
+		var req BatchRequest
 		malformed := func(err error) error {
 			return fmt.Errorf("request %s/%d is malformed: %w", req.ID, i, err)
 		}
@@ -100,14 +112,12 @@ func batchUpload(c *fiber.Ctx) error {
 			}
 			req.Complete.Model = m.Name
 			req.Body, _ = json.Marshal(req.Complete)
-			req.Complete = nil
 		case embeddings:
 			if !m.Embedding {
 				return malformed(fmt.Errorf("model %s doesn't do embeddings", model))
 			}
-			req.Embed.Model = openai.EmbeddingModel(m.Name)
+			req.Embed.Model = m.Name
 			req.Body, _ = json.Marshal(req.Embed)
-			req.Embed = nil
 		}
 		pid := p.Driver + "." + p.Name
 		by[pid] = p
@@ -118,7 +128,7 @@ agg:
 	for pid, batch := range batches {
 		p := by[pid]
 
-		var chunks []simp.Batch
+		var chunks []BatchRequests
 		switch p.Driver {
 		case "anthropic":
 			chunks = batchAgg(batch, 30*1e6, 10*1e3)
@@ -129,7 +139,7 @@ agg:
 		}
 		job := BatchJob{Chunks: chunks}
 		if chunks == nil {
-			job.Shots = batch
+			job.Magazine = batch
 		}
 		jobs = append(jobs, job)
 	}
@@ -137,17 +147,19 @@ agg:
 }
 
 type BatchJob struct {
-	Shots  simp.Batch
-	Chunks []simp.Batch
+	// Individual requests done in traditional fashion
+	Magazine BatchRequests
+	// Batches of requests a la Batch API
+	Chunks []BatchRequests
 }
 
 func saveJobs(c *fiber.Ctx, jobs []BatchJob) error {
 	return notImplemented(c)
 }
 
-func batchAgg(batch simp.Batch, maxbytes, maxn int) (chunks []simp.Batch) {
+func batchAgg(batch BatchRequests, maxbytes, maxn int) (chunks []BatchRequests) {
 	var (
-		chunk  simp.Batch
+		chunk  BatchRequests
 		rn, rb int
 	)
 	for _, req := range batch {

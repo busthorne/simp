@@ -28,14 +28,7 @@ type Anthropic struct {
 }
 
 func (a *Anthropic) List(ctx context.Context) ([]simp.Model, error) {
-	// Anthropic doesn't have a list models endpoint, return supported models statically
-	return []simp.Model{
-		{ID: "claude-3-sonnet"},
-		{ID: "claude-3-opus"},
-		{ID: "claude-3-haiku"},
-		{ID: "claude-3-5-sonnet"},
-		{ID: "claude-3-5-haiku"},
-	}, nil
+	return nil, simp.ErrNotImplemented
 }
 
 func (a *Anthropic) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, err error) {
@@ -43,9 +36,7 @@ func (a *Anthropic) Embed(ctx context.Context, req simp.Embed) (e simp.Embedding
 	return
 }
 
-func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Completion, ret error) {
-	c = &simp.Completion{}
-
+func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c simp.Completion, ret error) {
 	// Convert messages to Anthropic format
 	messages := []anthropic.MessageParam{}
 	system := ""
@@ -112,17 +103,15 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 		if err != nil {
 			return c, err
 		}
-		c.ChatCompletionResponse = openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{{
-				Message: openai.ChatCompletionMessage{
-					Role:    "assistant",
-					Content: resp.Content[0].Text,
-				},
-			}},
-		}
+		c.Choices = []openai.ChatCompletionChoice{{
+			Message: openai.ChatCompletionMessage{
+				Role:    "assistant",
+				Content: resp.Content[0].Text,
+			},
+		}}
 		return
 	}
-	c.Stream = make(chan openai.ChatCompletionStreamResponse)
+	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
 		defer close(c.Stream)
 		stream := a.Messages.NewStreaming(ctx, params)
@@ -143,12 +132,11 @@ func (a *Anthropic) Complete(ctx context.Context, req simp.Complete) (c *simp.Co
 			}
 		}
 		if err := stream.Err(); err != nil {
-			c.Err = err
-			// Send error as final message
 			c.Stream <- openai.ChatCompletionStreamResponse{
 				Choices: []openai.ChatCompletionStreamChoice{{
 					FinishReason: "error",
 				}},
+				Error: err,
 			}
 		}
 	}()

@@ -46,10 +46,10 @@ func (v *Vertex) Embed(ctx context.Context, req simp.Embed) (simp.Embeddings, er
 	return simp.Embeddings{}, simp.ErrNotImplemented
 }
 
-func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (*simp.Completion, error) {
+func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Completion, err error) {
 	client, err := v.client(ctx)
 	if err != nil {
-		return nil, err
+		return c, err
 	}
 	model := client.GenerativeModel(req.Model)
 	cs := model.StartChat()
@@ -62,7 +62,7 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 				}
 				continue
 			}
-			return nil, fmt.Errorf("system message is misplaced")
+			return c, fmt.Errorf("system message is misplaced")
 		}
 		c := &genai.Content{
 			Role:  msg.Role,
@@ -71,15 +71,14 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 		h = append(h, c)
 	}
 	if len(h) == 0 {
-		return nil, fmt.Errorf("no messages to complete")
+		return c, fmt.Errorf("no messages to complete")
 	}
 	cs.History = h[:len(h)-1]
 	tail := h[len(h)-1].Parts
-	c := &simp.Completion{}
 	if !req.Stream {
 		resp, err := cs.SendMessage(ctx, tail...)
 		if err != nil {
-			return nil, err
+			return c, err
 		}
 		for _, can := range resp.Candidates {
 			c.Choices = append(c.Choices, openai.ChatCompletionChoice{
@@ -97,10 +96,9 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 		return c, nil
 	}
 	it := cs.SendMessageStream(ctx, tail...)
-	c.Stream = make(chan openai.ChatCompletionStreamResponse)
+	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
 		defer close(c.Stream)
-		var finishReason openai.FinishReason = "stop"
 		for {
 			chunk, err := it.Next()
 			switch err {
@@ -115,18 +113,19 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 				}
 				c.Stream <- openai.ChatCompletionStreamResponse{Choices: choices}
 			case iterator.Done:
-				goto finish
+				c.Stream <- openai.ChatCompletionStreamResponse{
+					Choices: []openai.ChatCompletionStreamChoice{{
+						FinishReason: "stop",
+					}},
+				}
 			default:
-				c.Err = err
-				finishReason = "error"
-				goto finish
+				c.Stream <- openai.ChatCompletionStreamResponse{
+					Choices: []openai.ChatCompletionStreamChoice{{
+						FinishReason: "error",
+					}},
+					Error: err,
+				}
 			}
-		}
-	finish:
-		c.Stream <- openai.ChatCompletionStreamResponse{
-			Choices: []openai.ChatCompletionStreamChoice{{
-				FinishReason: finishReason,
-			}},
 		}
 	}()
 	return c, nil

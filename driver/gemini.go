@@ -39,10 +39,10 @@ func (g *Gemini) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, 
 	return
 }
 
-func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (*simp.Completion, error) {
+func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (c simp.Completion, err error) {
 	client, err := genai.NewClient(ctx, g.options...)
 	if err != nil {
-		return nil, err
+		return c, err
 	}
 	model := client.GenerativeModel(req.Model)
 	chat := model.StartChat()
@@ -52,7 +52,7 @@ func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 		switch msg.Role {
 		case "system":
 			if i != 0 {
-				return nil, fmt.Errorf("misplaced system message")
+				return c, fmt.Errorf("misplaced system message")
 			}
 			model.SystemInstruction = genai.NewUserContent(genai.Text(msg.Content))
 		case "user":
@@ -60,7 +60,7 @@ func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 		case "assistant":
 			role = "model"
 		default:
-			return nil, simp.ErrUnsupportedRole
+			return c, simp.ErrUnsupportedRole
 		}
 		var parts []genai.Part
 		switch {
@@ -74,21 +74,21 @@ func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 				case openai.ChatMessagePartTypeImageURL:
 					mime, b, err := url2image64(ctx, part.ImageURL.URL)
 					if err != nil {
-						return nil, fmt.Errorf("message %d part %d: %w", i, j, err)
+						return c, fmt.Errorf("message %d part %d: %w", i, j, err)
 					}
 					m := strings.TrimPrefix(mime, "image/")
 					switch m {
 					case "jpeg", "png":
 					default:
-						return nil, fmt.Errorf("message %d part %d: %w", i, j, simp.ErrUnsupportedMime)
+						return c, fmt.Errorf("message %d part %d: %w", i, j, simp.ErrUnsupportedMime)
 					}
 					parts = append(parts, genai.ImageData(m, b))
 				default:
-					return nil, fmt.Errorf("message %d part %d: type %s is not supported", i, j, part.Type)
+					return c, fmt.Errorf("message %d part %d: type %s is not supported", i, j, part.Type)
 				}
 			}
 		default:
-			return nil, fmt.Errorf("empty message %d", i+1)
+			return c, fmt.Errorf("empty message %d", i+1)
 		}
 		chat.History = append(chat.History, &genai.Content{Parts: parts, Role: role})
 	}
@@ -97,43 +97,41 @@ func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (*simp.Complet
 	case "user":
 		prompt = last
 	default:
-		return nil, fmt.Errorf("thread must end with a user message")
+		return c, fmt.Errorf("thread must end with a user message")
 	}
-
-	c := &simp.Completion{}
 
 	if !req.Stream {
 		resp, err := chat.SendMessage(ctx, prompt.Parts...)
 		if err != nil {
-			return nil, err
+			return c, err
 		}
 		// Convert Gemini response to OpenAI format
-		choices := []openai.ChatCompletionChoice{}
 		for i, s := range g.choose(resp.Candidates) {
-			choices = append(choices, openai.ChatCompletionChoice{
+			c.Choices = append(c.Choices, openai.ChatCompletionChoice{
 				Index:   i,
 				Message: openai.ChatCompletionMessage{Content: s},
 			})
 		}
-		c.ChatCompletionResponse = openai.ChatCompletionResponse{Choices: choices}
 		return c, nil
 	}
 
-	c.Stream = make(chan openai.ChatCompletionStreamResponse)
+	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
 		defer close(c.Stream)
 		iter := chat.SendMessageStream(ctx, prompt.Parts...)
 		for {
 			resp, err := iter.Next()
-			if err == iterator.Done {
-				return
-			}
-			if err != nil {
-				c.Err = err
+			switch err {
+			case nil:
+			case iterator.Done:
 				c.Stream <- openai.ChatCompletionStreamResponse{
-					Choices: []openai.ChatCompletionStreamChoice{{
-						FinishReason: "error",
-					}},
+					Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "stop"}},
+				}
+				return
+			default:
+				c.Stream <- openai.ChatCompletionStreamResponse{
+					Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "error"}},
+					Error:   err,
 				}
 				return
 			}

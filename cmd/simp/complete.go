@@ -82,11 +82,9 @@ func promptComplete() error {
 		case "content_filter":
 		case "null":
 		case "error":
+			stderrf("\nstream complete: %v\n", chunk.Error)
+			exit(1)
 		}
-	}
-	if err := resp.Err; err != nil {
-		stderrf("\nstream complete: %v\n", err)
-		exit(1)
 	}
 	fmt.Println()
 	if *vim {
