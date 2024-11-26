@@ -3,11 +3,14 @@ package driver
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
 
 	aiplatform "cloud.google.com/go/aiplatform/apiv1"
-	"cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
+	aipb "cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
 	"cloud.google.com/go/storage"
 	"cloud.google.com/go/vertexai/genai"
 	"github.com/busthorne/simp"
@@ -21,19 +24,16 @@ import (
 
 // NewVertex creates a new Vertex AI client.
 func NewVertex(p config.Provider) (*Vertex, error) {
-	return &Vertex{p: p}, nil
+	b, _ := base64.StdEncoding.DecodeString(p.APIKey)
+	if len(b) > 0 {
+		p.APIKey = string(b)
+	}
+	return &Vertex{p}, nil
 }
 
 // Vertex implements the driver interface using Google's Vertex AI API
 type Vertex struct {
-	p config.Provider
-}
-
-func (v *Vertex) client(ctx context.Context) (*genai.Client, error) {
-	return genai.NewClient(ctx,
-		v.p.Project,
-		v.p.Region,
-		option.WithCredentialsJSON([]byte(v.p.APIKey)))
+	config.Provider
 }
 
 func (v *Vertex) List(ctx context.Context) ([]simp.Model, error) {
@@ -62,7 +62,9 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Comple
 	cs := model.StartChat()
 	h := []*genai.Content{}
 	for i, msg := range req.Messages {
-		if msg.Role == "system" {
+		role := msg.Role
+		switch role {
+		case "system":
 			if i == 0 {
 				model.SystemInstruction = &genai.Content{
 					Parts: []genai.Part{genai.Text(msg.Content)},
@@ -70,9 +72,14 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Comple
 				continue
 			}
 			return c, fmt.Errorf("system message is misplaced")
+		case "user":
+		case "assistant":
+			role = "model"
+		default:
+			return c, fmt.Errorf("unsupported role: %q", role)
 		}
 		c := &genai.Content{
-			Role:  msg.Role,
+			Role:  role,
 			Parts: []genai.Part{genai.Text(msg.Content)},
 		}
 		h = append(h, c)
@@ -138,7 +145,7 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 	if len(mag) == 0 {
 		return simp.ErrNotFound
 	}
-	if v.p.Bucket == "" {
+	if v.Bucket == "" {
 		return fmt.Errorf("bucket configuration required for batch operations")
 	}
 
@@ -153,19 +160,19 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 			return fmt.Errorf("magazine/%d: %w", i, err)
 		}
 	}
-	store, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(v.p.APIKey)))
+	store, err := v.storageClient(ctx)
 	if err != nil {
-		return fmt.Errorf("storage client: %w", err)
+		return err
 	}
 	defer store.Close()
 	batch.ID = uuid.New().String()
 	fname := fmt.Sprintf("%s.jsonl", batch.ID)
-	ww := store.Bucket(v.p.Bucket).Object(fname).NewWriter(ctx)
+	ww := store.Bucket(v.Bucket).Object(fname).NewWriter(ctx)
 	if _, err := ww.Write(b.Bytes()); err != nil {
-		return fmt.Errorf("cloud upload error: %w", err)
+		return fmt.Errorf("cannot write to bucket: %w", err)
 	}
 	if err := ww.Close(); err != nil {
-		return fmt.Errorf("unexpected cloud upload error: %w", err)
+		return fmt.Errorf("unexpected upload error: %w", err)
 	}
 	batch.InputFileID = fname
 	batch.Metadata = map[string]any{
@@ -175,10 +182,9 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 }
 
 func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
-	endpoint := fmt.Sprintf("%s-aiplatform.googleapis.com:443", v.p.Region)
-	client, err := aiplatform.NewJobClient(ctx, option.WithEndpoint(endpoint))
+	client, err := v.jobClient(ctx)
 	if err != nil {
-		return fmt.Errorf("create job client: %w", err)
+		return err
 	}
 	defer client.Close()
 
@@ -186,25 +192,25 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
 		// "temperature":     0.2,
 		// "maxOutputTokens": 200,
 	})
-	bucketUri := "gs://" + v.p.Bucket
-	req := &aiplatformpb.CreateBatchPredictionJobRequest{
-		Parent: fmt.Sprintf("projects/%s/locations/%s", v.p.Project, v.p.Region),
-		BatchPredictionJob: &aiplatformpb.BatchPredictionJob{
+	bucketUri := "gs://" + v.Bucket
+	req := &aipb.CreateBatchPredictionJobRequest{
+		Parent: fmt.Sprintf("projects/%s/locations/%s", v.Project, v.Region),
+		BatchPredictionJob: &aipb.BatchPredictionJob{
 			DisplayName:     batch.ID,
 			Model:           fmt.Sprintf("publishers/google/models/%s", batch.Metadata["model"]),
 			ModelParameters: params,
-			InputConfig: &aiplatformpb.BatchPredictionJob_InputConfig{
-				Source: &aiplatformpb.BatchPredictionJob_InputConfig_GcsSource{
-					GcsSource: &aiplatformpb.GcsSource{
+			InputConfig: &aipb.BatchPredictionJob_InputConfig{
+				Source: &aipb.BatchPredictionJob_InputConfig_GcsSource{
+					GcsSource: &aipb.GcsSource{
 						Uris: []string{bucketUri + "/" + batch.InputFileID},
 					},
 				},
 				InstancesFormat: "jsonl",
 			},
-			OutputConfig: &aiplatformpb.BatchPredictionJob_OutputConfig{
-				Destination: &aiplatformpb.BatchPredictionJob_OutputConfig_GcsDestination{
-					GcsDestination: &aiplatformpb.GcsDestination{
-						OutputUriPrefix: bucketUri + "/result-",
+			OutputConfig: &aipb.BatchPredictionJob_OutputConfig{
+				Destination: &aipb.BatchPredictionJob_OutputConfig_GcsDestination{
+					GcsDestination: &aipb.GcsDestination{
+						OutputUriPrefix: bucketUri,
 					},
 				},
 				PredictionsFormat: "jsonl",
@@ -214,62 +220,84 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
 
 	job, err := client.CreateBatchPredictionJob(ctx, req)
 	if err != nil {
-		return fmt.Errorf("create batch job: %w", err)
+		return fmt.Errorf("cannot create job: %w", err)
 	}
 	batch.Metadata["job"] = job.GetName()
+	batch.Metadata["state"] = job.GetState()
 	v.updateStatus(batch, job.GetState())
 	return nil
 }
 
-func (v *Vertex) updateStatus(batch *simp.Batch, state aiplatformpb.JobState) {
-	switch state {
-	case aiplatformpb.JobState_JOB_STATE_SUCCEEDED, aiplatformpb.JobState_JOB_STATE_PARTIALLY_SUCCEEDED:
-		batch.Status = openai.BatchStatusCompleted
-	case aiplatformpb.JobState_JOB_STATE_CANCELLED, aiplatformpb.JobState_JOB_STATE_CANCELLING:
-		batch.Status = openai.BatchStatusCancelled
-	case aiplatformpb.JobState_JOB_STATE_EXPIRED:
-		batch.Status = openai.BatchStatusExpired
-	case
-		aiplatformpb.JobState_JOB_STATE_UPDATING,
-		aiplatformpb.JobState_JOB_STATE_PENDING,
-		aiplatformpb.JobState_JOB_STATE_QUEUED,
-		aiplatformpb.JobState_JOB_STATE_PAUSED,
-		aiplatformpb.JobState_JOB_STATE_RUNNING:
-		// pending
-		batch.Status = openai.BatchStatusInProgress
-	default:
-		batch.Status = openai.BatchStatusFailed
-	}
-}
-
 func (v *Vertex) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
-	return simp.ErrNotImplemented
+	client, err := v.jobClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	job, err := client.GetBatchPredictionJob(ctx, &aipb.GetBatchPredictionJobRequest{
+		Name: batch.Metadata["job"].(string),
+	})
+	if err != nil {
+		return fmt.Errorf("cannot get job: %w", err)
+	}
+	batch.Metadata["state"] = job.GetState()
+	batch.Metadata["dest"] = job.GetOutputInfo().GetGcsOutputDirectory()
+	v.updateStatus(batch, job.GetState())
+	return nil
 }
 
 func (v *Vertex) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.Magazine, err error) {
-	return nil, simp.ErrNotImplemented
+	store, err := v.storageClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+
+	gs := batch.Metadata["dest"].(string)
+	path := strings.TrimPrefix(gs, "gs://"+v.Bucket+"/") + "/predictions.jsonl"
+	r, err := store.Bucket(v.Bucket).Object(path).NewReader(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read from bucket: %w", err)
+	}
+	defer r.Close()
+
+	jsonl := json.NewDecoder(r)
+	for {
+		var line struct {
+			Pre  json.RawMessage `json:"request"`
+			Post aipb.GenerateContentResponse
+		}
+		if err := jsonl.Decode(&line); err != nil {
+			if err == io.EOF {
+				break
+			}
+		}
+	}
+
+	return nil, nil
 }
 
 func (v *Vertex) BatchCancel(ctx context.Context, batch *simp.Batch) error {
 	return simp.ErrNotImplemented
 }
 
-func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) (b aiplatformpb.GenerateContentRequest) {
-	contents := make([]*aiplatformpb.Content, 0, len(a.Messages))
+func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) (b aipb.GenerateContentRequest) {
+	contents := make([]*aipb.Content, 0, len(a.Messages))
 	for _, msg := range a.Messages {
 		if msg.Role == "system" {
-			b.SystemInstruction = &aiplatformpb.Content{
-				Parts: []*aiplatformpb.Part{{
-					Data: &aiplatformpb.Part_Text{
+			b.SystemInstruction = &aipb.Content{
+				Parts: []*aipb.Part{{
+					Data: &aipb.Part_Text{
 						Text: msg.Content,
 					},
 				}},
 			}
 		}
-		content := &aiplatformpb.Content{
+		content := &aipb.Content{
 			Role: msg.Role,
-			Parts: []*aiplatformpb.Part{{
-				Data: &aiplatformpb.Part_Text{
+			Parts: []*aipb.Part{{
+				Data: &aipb.Part_Text{
 					Text: msg.Content,
 				},
 			}},
@@ -278,4 +306,55 @@ func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) (b aiplatform
 	}
 	b.Contents = contents
 	return
+}
+
+func (v *Vertex) updateStatus(batch *simp.Batch, state aipb.JobState) {
+	switch state {
+	case aipb.JobState_JOB_STATE_SUCCEEDED, aipb.JobState_JOB_STATE_PARTIALLY_SUCCEEDED:
+		batch.Status = openai.BatchStatusCompleted
+	case aipb.JobState_JOB_STATE_CANCELLED, aipb.JobState_JOB_STATE_CANCELLING:
+		batch.Status = openai.BatchStatusCancelled
+	case aipb.JobState_JOB_STATE_EXPIRED:
+		batch.Status = openai.BatchStatusExpired
+	case
+		aipb.JobState_JOB_STATE_UPDATING,
+		aipb.JobState_JOB_STATE_PENDING,
+		aipb.JobState_JOB_STATE_QUEUED,
+		aipb.JobState_JOB_STATE_PAUSED,
+		aipb.JobState_JOB_STATE_RUNNING:
+		// pending
+		batch.Status = openai.BatchStatusInProgress
+	default:
+		batch.Status = openai.BatchStatusFailed
+	}
+}
+
+func (v *Vertex) client(ctx context.Context) (*genai.Client, error) {
+	client, err := genai.NewClient(ctx,
+		v.Project,
+		v.Region,
+		option.WithCredentialsJSON([]byte(v.APIKey)))
+	if err != nil {
+		return nil, fmt.Errorf("cannot make client: %w", err)
+	}
+	return client, nil
+}
+
+func (v *Vertex) jobClient(ctx context.Context) (*aiplatform.JobClient, error) {
+	endpoint := fmt.Sprintf("%s-aiplatform.googleapis.com:443", v.Region)
+	client, err := aiplatform.NewJobClient(ctx,
+		option.WithEndpoint(endpoint),
+		option.WithCredentialsJSON([]byte(v.APIKey)))
+	if err != nil {
+		return nil, fmt.Errorf("cannot make job client: %w", err)
+	}
+	return client, nil
+}
+
+func (v *Vertex) storageClient(ctx context.Context) (*storage.Client, error) {
+	store, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(v.APIKey)))
+	if err != nil {
+		return nil, fmt.Errorf("cannot make storage client: %w", err)
+	}
+	return store, nil
 }

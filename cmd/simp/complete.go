@@ -58,7 +58,7 @@ func promptComplete() error {
 		fmt.Printf("%s%s %s\n", ws, simp.MarkAsst, model.ShortestAlias())
 	}
 	resp, err := drv.Complete(bg, simp.Complete{
-		Stream:           true,
+		Stream:           !*discrete,
 		Model:            model.Name,
 		Messages:         cable.Messages(),
 		Temperature:      coalesce32(temperature, cfg.Default.Temperature, model.Temperature),
@@ -69,6 +69,10 @@ func promptComplete() error {
 	if err != nil {
 		stderrf("%T %v\n", drv, err)
 		exit(1)
+	}
+	if *discrete {
+		fmt.Print(resp.Choices[0].Message.Content)
+		goto suffix
 	}
 	for chunk := range resp.Stream {
 		c := chunk.Choices[0]
@@ -86,6 +90,7 @@ func promptComplete() error {
 			exit(1)
 		}
 	}
+suffix:
 	fmt.Println()
 	if *vim {
 		fmt.Printf("\n%s%s\n\n", ws, simp.MarkUser)

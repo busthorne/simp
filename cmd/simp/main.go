@@ -30,9 +30,10 @@ var (
 	historypath      = flag.Bool("historypath", false, "display history path per current location")
 	interactive      = flag.Bool("i", false, "interactive mode")
 	verbose          = flag.Bool("v", false, "verbose output")
+	discrete         = flag.Bool("discrete", false, "disable streaming")
 	lessThan         = flag.Int("lt", 0, "less than this many tokens")
-	temperature      = flag.Float64("t", 0.7, "temperature")
-	topP             = flag.Float64("p", 1.0, "top_p sampling")
+	temperature      = flag.Float64("t", 0, "temperature")
+	topP             = flag.Float64("p", 0, "top_p sampling")
 	frequencyPenalty = flag.Float64("fp", 0, "frequency penalty")
 	presencePenalty  = flag.Float64("pp", 0, "presence penalty")
 

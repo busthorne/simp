@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 
 	"github.com/busthorne/simp"
@@ -37,7 +36,6 @@ func findWaldo(alias string) (simp.Driver, config.Model, error) {
 }
 
 func drive(p config.Provider) (d simp.Driver, err error) {
-	var apikey string
 	if p.APIKey == "" {
 		ring, err := keyringFor(p, cfg)
 		if err != nil {
@@ -57,10 +55,6 @@ func drive(p config.Provider) (d simp.Driver, err error) {
 	case "gemini":
 		d, err = driver.NewGemini(p)
 	case "vertex":
-		b, _ := base64.StdEncoding.DecodeString(apikey)
-		if len(b) > 0 {
-			p.APIKey = string(b)
-		}
 		d, err = driver.NewVertex(p)
 	// case "dify":
 	default:
