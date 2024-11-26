@@ -137,7 +137,7 @@ type Provider struct {
 	Models     []Model  `hcl:"model,block"`
 	AllowedIPs []string `hcl:"allowed_ips,optional"`
 	BatchAPI   bool     `hcl:"batch_api,optional"`
-	Bucket     string   `hcl:"bucket,optional"`
+	Dataset    string   `hcl:"dataset,optional"`
 
 	// Vertex
 	Project string `hcl:"project,optional"`

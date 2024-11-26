@@ -1,17 +1,14 @@
 package driver
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
-	"strings"
 
 	aiplatform "cloud.google.com/go/aiplatform/apiv1"
 	aipb "cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
-	"cloud.google.com/go/storage"
+	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/vertexai/genai"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
@@ -27,6 +24,9 @@ func NewVertex(p config.Provider) (*Vertex, error) {
 	b, _ := base64.StdEncoding.DecodeString(p.APIKey)
 	if len(b) > 0 {
 		p.APIKey = string(b)
+	}
+	if p.Dataset == "" {
+		p.Dataset = "simpbatches"
 	}
 	return &Vertex{p}, nil
 }
@@ -145,39 +145,61 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 	if len(mag) == 0 {
 		return simp.ErrNotFound
 	}
-	if v.Bucket == "" {
-		return fmt.Errorf("bucket configuration required for batch operations")
+	if batch.ID == "" {
+		batch.ID = uuid.New().String()[:18]
 	}
 
-	b := bytes.Buffer{}
-	w := json.NewEncoder(&b)
+	client, err := v.bigqueryClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	type vertexBatch struct {
+		ID      string `bigquery:"custom_id"`
+		Request string `bigquery:"request"`
+	}
+	rows := []vertexBatch{}
+	models := map[string]bool{}
 	for i, u := range mag {
 		if u.Cin == nil {
 			return fmt.Errorf("magazine/%d: embeddings are %w", i, simp.ErrNotImplemented)
 		}
-		req := v.serializeRequest(u.Cin)
-		if err := w.Encode(map[string]any{"request": &req}); err != nil {
-			return fmt.Errorf("magazine/%d: %w", i, err)
+		models[u.Cin.Model] = true
+		if len(models) > 1 {
+			return fmt.Errorf("all completions must use the same model")
 		}
+		rows = append(rows, vertexBatch{
+			ID:      u.Id,
+			Request: v.serializeRequest(u.Cin),
+		})
 	}
-	store, err := v.storageClient(ctx)
+	err = client.
+		Dataset(v.Dataset).
+		Table(batch.ID).
+		Create(ctx, &bigquery.TableMetadata{
+			Name: batch.ID,
+			Schema: bigquery.Schema{
+				{Name: "custom_id", Type: bigquery.StringFieldType},
+				{Name: "request", Type: bigquery.StringFieldType},
+			},
+		})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create table: %w", err)
 	}
-	defer store.Close()
-	batch.ID = uuid.New().String()
-	fname := fmt.Sprintf("%s.jsonl", batch.ID)
-	ww := store.Bucket(v.Bucket).Object(fname).NewWriter(ctx)
-	if _, err := ww.Write(b.Bytes()); err != nil {
-		return fmt.Errorf("cannot write to bucket: %w", err)
+	err = client.
+		Dataset(v.Dataset).
+		Table(batch.ID).
+		Inserter().
+		Put(ctx, rows)
+	if err != nil {
+		return fmt.Errorf("failed to insert batch: %w", err)
 	}
-	if err := ww.Close(); err != nil {
-		return fmt.Errorf("unexpected upload error: %w", err)
+	batch.Metadata = map[string]any{}
+	for model := range models {
+		batch.Metadata["model"] = model
 	}
-	batch.InputFileID = fname
-	batch.Metadata = map[string]any{
-		"model": fmt.Sprintf("publishers/google/models/%s", mag[0].Cin.Model),
-	}
+	batch.InputFileID = batch.ID
 	return nil
 }
 
@@ -192,36 +214,34 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
 		// "temperature":     0.2,
 		// "maxOutputTokens": 200,
 	})
-	bucketUri := "gs://" + v.Bucket
+
+	input := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, batch.ID)
+	output := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, "predict-"+batch.ID)
 	req := &aipb.CreateBatchPredictionJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", v.Project, v.Region),
 		BatchPredictionJob: &aipb.BatchPredictionJob{
 			DisplayName:     batch.ID,
-			Model:           fmt.Sprintf("publishers/google/models/%s", batch.Metadata["model"]),
+			Model:           "publishers/google/models/" + batch.Metadata["model"].(string),
 			ModelParameters: params,
 			InputConfig: &aipb.BatchPredictionJob_InputConfig{
-				Source: &aipb.BatchPredictionJob_InputConfig_GcsSource{
-					GcsSource: &aipb.GcsSource{
-						Uris: []string{bucketUri + "/" + batch.InputFileID},
-					},
+				Source: &aipb.BatchPredictionJob_InputConfig_BigquerySource{
+					BigquerySource: &aipb.BigQuerySource{InputUri: input},
 				},
-				InstancesFormat: "jsonl",
+				InstancesFormat: "bigquery",
 			},
 			OutputConfig: &aipb.BatchPredictionJob_OutputConfig{
-				Destination: &aipb.BatchPredictionJob_OutputConfig_GcsDestination{
-					GcsDestination: &aipb.GcsDestination{
-						OutputUriPrefix: bucketUri,
-					},
+				Destination: &aipb.BatchPredictionJob_OutputConfig_BigqueryDestination{
+					BigqueryDestination: &aipb.BigQueryDestination{OutputUri: output},
 				},
-				PredictionsFormat: "jsonl",
+				PredictionsFormat: "bigquery",
 			},
 		},
 	}
-
 	job, err := client.CreateBatchPredictionJob(ctx, req)
 	if err != nil {
 		return fmt.Errorf("cannot create job: %w", err)
 	}
+	batch.Metadata["table"] = input
 	batch.Metadata["job"] = job.GetName()
 	batch.Metadata["state"] = job.GetState()
 	v.updateStatus(batch, job.GetState())
@@ -248,64 +268,114 @@ func (v *Vertex) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
 }
 
 func (v *Vertex) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.Magazine, err error) {
-	store, err := v.storageClient(ctx)
+	client, err := v.bigqueryClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer store.Close()
+	defer client.Close()
 
-	gs := batch.Metadata["dest"].(string)
-	path := strings.TrimPrefix(gs, "gs://"+v.Bucket+"/") + "/predictions.jsonl"
-	r, err := store.Bucket(v.Bucket).Object(path).NewReader(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("cannot read from bucket: %w", err)
+	type Row struct {
+		ID       string `bigquery:"custom_id"`
+		Response string `bigquery:"response"`
 	}
-	defer r.Close()
-
-	jsonl := json.NewDecoder(r)
+	type Parts struct {
+		Text     string `json:"text,omitempty"`
+		FileUri  string `json:"fileUri,omitempty"`
+		MimeType string `json:"mimeType,omitempty"`
+	}
+	type Content struct {
+		Role  string  `json:"role"`
+		Parts []Parts `json:"parts"`
+	}
+	type Candidates struct {
+		AvgLogprobs  float64 `json:"avgLogprobs"`
+		Content      Content `json:"content"`
+		FinishReason string  `json:"finishReason"`
+	}
+	type UsageMetadata struct {
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		PromptTokenCount     int `json:"promptTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	}
+	type Response struct {
+		Candidates    []Candidates  `json:"candidates"`
+		ModelVersion  string        `json:"modelVersion"`
+		UsageMetadata UsageMetadata `json:"usageMetadata"`
+	}
+	it := client.
+		Dataset(v.Dataset).
+		Table("predict-" + batch.ID).
+		Read(ctx)
 	for {
-		var line struct {
-			Pre  json.RawMessage `json:"request"`
-			Post aipb.GenerateContentResponse
-		}
-		if err := jsonl.Decode(&line); err != nil {
-			if err == io.EOF {
-				break
+		var row Row
+		err := it.Next(&row)
+		switch err {
+		case nil:
+			if row.Response == "" {
+				continue
 			}
+		case iterator.Done:
+			return mag, nil
+		default:
+			return nil, fmt.Errorf("cannot read from table: %w", err)
 		}
-	}
 
-	return nil, nil
+		var resp Response
+		if err := json.Unmarshal([]byte(row.Response), &resp); err != nil {
+			return nil, fmt.Errorf("cannot unmarshal response/%s: %w", row.ID, err)
+		}
+
+		bullet := openai.ChatCompletionResponse{ID: row.ID}
+		for _, can := range resp.Candidates {
+			c := openai.ChatCompletionChoice{
+				Message: openai.ChatCompletionMessage{
+					Role:    "assistant",
+					Content: can.Content.Parts[0].Text,
+				},
+			}
+			bullet.Choices = append(bullet.Choices, c)
+		}
+		mag = append(mag, simp.BatchUnion{Cout: &bullet})
+	}
 }
 
 func (v *Vertex) BatchCancel(ctx context.Context, batch *simp.Batch) error {
 	return simp.ErrNotImplemented
 }
 
-func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) (b aipb.GenerateContentRequest) {
-	contents := make([]*aipb.Content, 0, len(a.Messages))
+func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) string {
+	type textPart struct {
+		Text string `json:"text"`
+	}
+	type content struct {
+		Role  string     `json:"role"`
+		Parts []textPart `json:"parts"`
+	}
+
+	req := map[string]any{}
+	contents := make([]content, 0, len(a.Messages))
 	for _, msg := range a.Messages {
-		if msg.Role == "system" {
-			b.SystemInstruction = &aipb.Content{
-				Parts: []*aipb.Part{{
-					Data: &aipb.Part_Text{
-						Text: msg.Content,
-					},
-				}},
-			}
+		role := msg.Role
+		switch role {
+		case "system":
+			// TODO: implement
+			continue
+		case "user":
+		case "assistant":
+			role = "model"
 		}
-		content := &aipb.Content{
-			Role: msg.Role,
-			Parts: []*aipb.Part{{
-				Data: &aipb.Part_Text{
-					Text: msg.Content,
-				},
-			}},
+		content := content{
+			Role:  role,
+			Parts: []textPart{{Text: msg.Content}},
 		}
 		contents = append(contents, content)
 	}
-	b.Contents = contents
-	return
+	req["contents"] = contents
+	b, err := json.Marshal(req)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
 }
 
 func (v *Vertex) updateStatus(batch *simp.Batch, state aipb.JobState) {
@@ -344,17 +414,21 @@ func (v *Vertex) jobClient(ctx context.Context) (*aiplatform.JobClient, error) {
 	endpoint := fmt.Sprintf("%s-aiplatform.googleapis.com:443", v.Region)
 	client, err := aiplatform.NewJobClient(ctx,
 		option.WithEndpoint(endpoint),
-		option.WithCredentialsJSON([]byte(v.APIKey)))
+		v.credentials())
 	if err != nil {
 		return nil, fmt.Errorf("cannot make job client: %w", err)
 	}
 	return client, nil
 }
 
-func (v *Vertex) storageClient(ctx context.Context) (*storage.Client, error) {
-	store, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(v.APIKey)))
+func (v *Vertex) bigqueryClient(ctx context.Context) (*bigquery.Client, error) {
+	client, err := bigquery.NewClient(ctx, v.Project, v.credentials())
 	if err != nil {
-		return nil, fmt.Errorf("cannot make storage client: %w", err)
+		return nil, fmt.Errorf("cannot make bigquery client: %w", err)
 	}
-	return store, nil
+	return client, nil
+}
+
+func (v *Vertex) credentials() option.ClientOption {
+	return option.WithCredentialsJSON([]byte(v.APIKey))
 }
