@@ -31,7 +31,7 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 - [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format
 - [x] [Daemon mode](#daemon)
 	- [x] OpenAI-compatible API gateway
-	- [ ] Universal [Batch API][2]
+	- [ ] Universal [Batch API](#batch-api)
 	- [ ] SSO
 - [x] Interactive mode
 - [x] [Vim mode][1]
@@ -40,10 +40,13 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 	- [x] Group by path parts
 	- [x] Ignore
 	- [x] [Annotations](#annotations)
-- [ ] Diff mode
+- [ ] Tools
+	- [ ] CLI
+	- [ ] Universal function-calling semantics
+	- [ ] Diff mode
 	- [ ] Vim integration
 - [ ] [RAG](#rag)
-- [ ] Funny: CI builds, cross-compilations, and everything
+- [ ] CI, regressions, & cross-compiled CD
 
 ## Cable format
 Simp includes a special-purpose plaintext cable format for chat conversations.
@@ -170,6 +173,72 @@ history {
 }
 ```
 
+### Batch API
+OpenAI has introduced [Batch API][2]—a means to perform many completions and embeddings at a time at 50% discount. Anthropic and Google have since followed. However, neither provider's API matches the other. This presents a challenge: if Google were to release a ground-breaking model, my OpenAI-centric code would be worthless. Because the daemon is a provider-agnostic, API gateway, it's well-positioned to support batching in provider-agnostic and model-agnostic fashion!
+
+Normally, a provider would require any given batch to be completions-only, or embeddings-only, or one model at a time (Google is like that!)
+
+Since `simp -daemon` has to translate batch formats regardless, it allows batches with arbitrary content, and arbitrary providers. You may address OpenAI, Anthropic, _and_ Google models all in the same batch, but also even the providers that _do not_ support batching. In that case, the dameon would treat your batch as "virtual", partition it into per-model chunks, and gather them on completion. If the model provider referenced in the batch does not support batching natively, the relevant tasks will trickle down at quota speed using normal endpoints.
+
+To consumer this behaviour is transparent; you get to create one OpenAI-style batch using whatever configured models (aliases) or providers, & the daemon would take care of the rest. If you work with text datasets as much as I do, my money is you would find this behaviour as _liberating_ at least as much as I do.
+
+I will soon be show-casing the [pg_bluerose][11] extension that brings LLM primitives to Postgres, including batching:
+
+```sql
+-- load a Hugginface dataset without ever writing it to disk (courtesy of pg_analytics)
+create foreign table hf.ukr_pravda_2y ()
+server parquet
+options (
+    files 'hf://datasets/shamotskyi/ukr_pravda_2y/parquet/default/train/*.parquet'
+);
+
+create or replace view ukr_pravda_2y as
+    select
+        -- unique id (required)
+        art_id as id,
+        chat('system', 'Paraphrase for audience of political scientists.',
+             'user', ukr_text) as q,
+        null::chatcompletion as a, -- placeholder
+        complete(
+            model => 'flash',
+            temperature => 0.5) as a_,
+        null::vector(1024) as v, -- placeholder
+        embed(model => 'jina-embedding-v3') as v_,
+        -- inference time tally: usage, errors, etc.
+        tally(),
+        -- later: joined from foreign table
+        d.*
+    from hf.ukr_pravda_2y as d;
+
+select complete_all('ukr_pravda_2y', batch => true);
+-- roughly does as follows:
+--
+-- CREATE TABLE bluerose.[dataset] AS
+--     SELECT columns before tally;
+-- CREATE INDEX ...
+-- INSERT INTO bluerose.jobs ...
+-- CREATE OR REPLACE VIEW [dataset] AS
+--     SELECT
+--         columns from internal batch-table
+--         join
+--         columns from original dataset
+--     FROM bluerose.[dataset], LATERAL [DDL]
+
+-- later: query only what's been completed so far
+select id, q, a, v from urk_pravda_2y where v is not null;
+
+-- later: token spending
+select
+    id,
+    total(tally,
+        usd_per_input,
+        usd_per_output) / 2 as usd -- discount
+from ukr_pravda_2y
+join bluerose.model_cost on model = tally->>'model';
+```
+
+This is the kind of use-case `simp -daemon` is meant to enable: make a view from nothing, `complete_all` and the completions are just there.
+
 ## History
 This is perhaps the biggest upgrade since the olden days of `simp` when—trivia—it was still called `gpt`.
 
@@ -195,6 +264,29 @@ Basically, if you'll be organising your chat histories, you might as well chip i
 
 I guess you might see now why I'd gone with [HCL][5].
 
+## Tools
+Tool-use is most exciting: I really hate how the major providers are doing it, & unfortunately there's limitations to what you can accomplish without control of the inference-time. Therefore, `simp` will likely only support model-in-the-loop tools with grammar sampling and K/V backtracking capabilities.
+
+**Key idea**: whereas you did round-trip endpoints per-call, you would have one, long model-in-the-loop inference. For example: see [AICI][12] by Microsoft for inspiration on how this could be done. So whenever the model makes a call, you parse it mid-completion, pause, go back to a K/V checkpoint before the call, and re-write with the result, carry on. The traditional API like OpenAI's—would lead you to believe that for a single chat completion with N sequential function-calls, N+1 round-trip inferences are necessary.
+
+However, this is only the case because your chat context has to go through the API line multiple times. If you retained control of the context window during inference, you could match its output grammatically in realtime! This is even more powerful when considering the parallel function-calling capability. The backtracking will reduce, or hide latency from network calls completely. Moreover, everything here lends to batching nicely: compute reasoning steps for parallel-calls from the same position in K/V cache. Also known as predictive branching.
+
+Have a reward model assign scores to reasoning, too; congratulations, your sampler implements [MCTS][14] with a RL reward function.
+
+I don't have a clear implementation strategy for tool-use in simp, but it would have to tick the following boxes:
+
+- [ ] Tools are well-defined [HCL][5] configs
+	- [ ] Shell command-tools a-la `echo 'do my k8s deployments' | simp -agent k8s -context ../infra`
+	- [ ] OpenAPI specs imported from JSON/YAML
+	- [ ] Virtual tools: models-as-tools, tool context delegations
+- [ ] All tools produce grammar inputs to [DAG][13] sampler
+- [ ] CLI semantics as ergonomic as possible
+	- [ ] Prerequisite: diff mode for fixing calls, editing code, etc. 
+	- [ ] Shell command-tools require `[y/n]` consent
+	- [ ] Vim mode support
+- [ ] API semantics a-la OpenAI, provider-agnostic compatibility
+- [ ] Bluerose semantics: Postgres functions meet transactions, meet sampler.
+
 ## License
 MIT
 
@@ -209,3 +301,7 @@ MIT
 [8]: https://github.com/pgvector/pgvector
 [9]: https://github.com/tensorchord/pgvecto.rs
 [10]: https://github.com/langgenius/dify
+[11]: https://github.com/busthorne/pg_bluerose
+[12]: https://github.com/microsoft/aici
+[13]: https://en.wikipedia.org/wiki/Directed_acyclic_graph
+[14]: https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
