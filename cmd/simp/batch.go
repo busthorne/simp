@@ -6,8 +6,9 @@ import (
 	"io"
 
 	"github.com/busthorne/simp"
-	"github.com/busthorne/simp/config"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+	"github.com/sashabaranov/go-openai"
 )
 
 var (
@@ -17,17 +18,12 @@ var (
 )
 
 type BatchRequest struct {
-	ID        string `json:"custom_id"`
-	Method    string `json:"method"`
-	URL       string `json:"url"`
-	MaxTokens int    `json:"max_tokens,omitempty"`
-
-	Body     json.RawMessage `json:"body,omitempty"`
-	Embed    simp.Embed      `json:"-"`
-	Complete simp.Complete   `json:"-"`
+	ID        string          `json:"custom_id"`
+	Method    string          `json:"method"`
+	URL       string          `json:"url"`
+	MaxTokens int             `json:"max_tokens,omitempty"`
+	Body      json.RawMessage `json:"body,omitempty"`
 }
-
-type BatchRequests []BatchRequest
 
 func batchUpload(c *fiber.Ctx) error {
 	switch purpose := c.FormValue("purpose"); purpose {
@@ -44,136 +40,119 @@ func batchUpload(c *fiber.Ctx) error {
 		return err
 	}
 	defer f.Close()
-	by := map[string]config.Provider{}
-	batches := map[string]BatchRequests{}
-	lines := json.NewDecoder(f)
+
+	var (
+		// driver (nil, if doesn't support batching) by model name
+		drivers = map[string]simp.BatchDriver{}
+		// magazine by model name
+		mags = map[string]simp.Magazine{}
+		// will parse one request at a time
+		lines = json.NewDecoder(f)
+	)
 	for i := 1; ; i++ {
 		var req BatchRequest
+
+		// a bit of a courtesy handler
 		malformed := func(err error) error {
 			return fmt.Errorf("request %s/%d is malformed: %w", req.ID, i, err)
 		}
+
+		// preliminary validation
 		switch err := lines.Decode(&req); err {
 		case nil:
 			if req.ID == "" {
 				return malformed(errNoid)
 			}
+			switch req.Method {
+			case "":
+			case "POST":
+			case "post":
+			default:
+				return malformed(errBadMethod)
+			}
 		case io.EOF:
-			goto agg
+			goto eof
 		default:
 			return malformed(err)
 		}
-		switch req.Method {
-		case "":
-		case "POST":
-		case "post":
-		default:
-			return malformed(errBadMethod)
-		}
-		const chatCompletions = "/v1/chat/completions"
-		const embeddings = "/v1/embeddings"
+
+		// mags consist of batch-unions of chat/embedding input/output
+		u := simp.BatchUnion{Id: req.ID}
 		model := ""
-		// conditional unmarshaling
-		switch req.URL {
-		case chatCompletions:
-			if err := json.Unmarshal(req.Body, &req.Complete); err != nil {
+		// conditional unmarshal
+		switch openai.BatchEndpoint(req.URL) {
+		case openai.BatchEndpointChatCompletions:
+			if err = json.Unmarshal(req.Body, &u.Cin); err != nil {
 				return malformed(err)
 			}
-			model = req.Complete.Model
-		case embeddings:
-			if err := json.Unmarshal(req.Body, &req.Embed); err != nil {
+			model = u.Cin.Model
+		case openai.BatchEndpointEmbeddings:
+			if err = json.Unmarshal(req.Body, &u.Ein); err != nil {
 				return malformed(err)
 			}
-			model = string(req.Embed.Model)
+			model = u.Ein.Model
 		default:
 			return malformed(errMeatNorFish)
 		}
-		m, p, ok := cfg.LookupModel(model)
-		if !ok {
-			return malformed(fmt.Errorf("model %s not found", model))
+		// TODO: add alias cache in findWaldo
+		d, m, err := findWaldo(model)
+		if err != nil {
+			return malformed(fmt.Errorf("model %q: %w", model, err))
 		}
-		// validation
-		switch req.URL {
-		case chatCompletions:
-			tailrole := ""
-			for i, m := range req.Complete.Messages {
+		if _, ok := drivers[model]; !ok {
+			bd, _ := d.(simp.BatchDriver)
+			drivers[model] = bd
+		}
+		// contextual validation
+		switch {
+		case u.Cin != nil:
+			if m.Embedding {
+				return malformed(fmt.Errorf("model %q is not a chat model", model))
+			}
+			alt := ""
+			for i, m := range u.Cin.Messages {
 				switch m.Role {
 				case "system":
 					if i != 0 {
-						return malformed(fmt.Errorf("system message is misplaced"))
+						return malformed(fmt.Errorf("system message/%d is misplaced", i+1))
 					}
 				case "user", "assistant":
-					if tailrole == m.Role {
-						return malformed(fmt.Errorf("message %d is not alternating", i+1))
+					if alt == m.Role {
+						return malformed(fmt.Errorf("message/%d is not alternating", i+1))
 					}
 				default:
-					return malformed(fmt.Errorf("message %d has bad role %s", i+1, m.Role))
+					return malformed(fmt.Errorf("message/%d unsupported role %q", i+1, m.Role))
 				}
-				tailrole = m.Role
+				alt = m.Role
 			}
-			req.Complete.Model = m.Name
-			req.Body, _ = json.Marshal(req.Complete)
-		case embeddings:
+			u.Cin.Model = m.Name
+		case u.Ein != nil:
 			if !m.Embedding {
-				return malformed(fmt.Errorf("model %s doesn't do embeddings", model))
+				return malformed(fmt.Errorf("model %q is not an embedding model", model))
 			}
-			req.Embed.Model = m.Name
-			req.Body, _ = json.Marshal(req.Embed)
+			u.Ein.Model = m.Name
 		}
-		pid := p.Driver + "." + p.Name
-		by[pid] = p
-		batches[pid] = append(batches[pid], req)
+		mags[model] = append(mags[model], u)
 	}
-agg:
-	var jobs []BatchJob
-	for pid, batch := range batches {
-		p := by[pid]
 
-		var chunks []BatchRequests
-		switch p.Driver {
-		case "anthropic":
-			chunks = batchAgg(batch, 30*1e6, 10*1e3)
-		case "openai":
-			if p.BaseURL == "" {
-				chunks = batchAgg(batch, 190*1e6, 50*1e3)
-			}
+eof:
+	for model, mag := range mags {
+		b := &simp.Batch{
+			ID:       uuid.New().String(),
+			Endpoint: mag.Endpoint(),
 		}
-		job := BatchJob{Chunks: chunks}
-		if chunks == nil {
-			job.Magazine = batch
+
+		bd := drivers[model]
+		if bd == nil {
+			// TODO: implement special-case via bookkeeping
+			return fmt.Errorf("cannot batch model %q", model)
 		}
-		jobs = append(jobs, job)
-	}
-	return saveJobs(c, jobs)
-}
 
-type BatchJob struct {
-	// Individual requests done in traditional fashion
-	Magazine BatchRequests
-	// Batches of requests a la Batch API
-	Chunks []BatchRequests
-}
-
-func saveJobs(c *fiber.Ctx, jobs []BatchJob) error {
-	return notImplemented(c)
-}
-
-func batchAgg(batch BatchRequests, maxbytes, maxn int) (chunks []BatchRequests) {
-	var (
-		chunk  BatchRequests
-		rn, rb int
-	)
-	for _, req := range batch {
-		if rn == maxn || rb+len(req.Body) > maxbytes {
-			chunks = append(chunks, chunk)
-			chunk = nil
-			rn, rb = 0, 0
+		if err := bd.BatchUpload(c.Context(), b, mag); err != nil {
+			return fmt.Errorf("batch upload failed for model %q: %w", model, err)
 		}
-		rn++
-		rb += len(req.Body)
-		chunk = append(chunk, req)
 	}
-	if len(chunk) > 0 {
-		chunks = append(chunks, chunk)
-	}
-	return
+
+	// TODO: bookkeeping
+	return simp.ErrNotImplemented
 }

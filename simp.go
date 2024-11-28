@@ -1,7 +1,6 @@
 package simp
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 
 // I hate long type names.
 type (
-	Context     = context.Context
 	Model       = openai.Model
 	Complete    = openai.ChatCompletionRequest
 	Completions = openai.ChatCompletionResponse

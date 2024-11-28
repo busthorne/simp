@@ -53,32 +53,29 @@ func (o *OpenAI) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 	case len(mag) == 0:
 		return simp.ErrNotFound
 	}
-	completing := mag[0].Cin != nil
-	if completing {
-		batch.Endpoint = chatCompletions
-	} else {
-		batch.Endpoint = embeddings
-	}
 	b := bytes.Buffer{}
 	w := json.NewEncoder(&b)
 	for i, u := range mag {
 		var err error
-		if completing {
+		switch {
+		case u.Cin != nil:
 			req := openai.BatchChatCompletionRequest{
 				CustomID: u.Id,
 				Body:     *u.Cin,
 				Method:   "POST",
-				URL:      chatCompletions,
+				URL:      openai.BatchEndpointChatCompletions,
 			}
 			err = w.Encode(req)
-		} else {
+		case u.Ein != nil:
 			req := openai.BatchEmbeddingRequest{
 				CustomID: u.Id,
 				Body:     *u.Ein,
 				Method:   "POST",
-				URL:      embeddings,
+				URL:      openai.BatchEndpointEmbeddings,
 			}
 			err = w.Encode(req)
+		default:
+			panic("unsupported batch op")
 		}
 		if err != nil {
 			return fmt.Errorf("magazine/%d: %w", i, err)
@@ -133,10 +130,13 @@ func (o *OpenAI) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.
 	for i := 0; ; i++ {
 		var u simp.BatchUnion
 		var err error
-		if batch.Endpoint == chatCompletions {
+		switch batch.Endpoint {
+		case openai.BatchEndpointChatCompletions:
 			err = r.Decode(&u.Cout)
-		} else {
+		case openai.BatchEndpointEmbeddings:
 			err = r.Decode(&u.Eout)
+		default:
+			panic("unsupported batch endpoint")
 		}
 		switch err {
 		case nil:

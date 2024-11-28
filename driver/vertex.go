@@ -12,7 +12,6 @@ import (
 	"cloud.google.com/go/vertexai/genai"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
-	"github.com/google/uuid"
 	"github.com/sashabaranov/go-openai"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -142,13 +141,6 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Comple
 }
 
 func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Magazine) error {
-	if len(mag) == 0 {
-		return simp.ErrNotFound
-	}
-	if batch.ID == "" {
-		batch.ID = uuid.New().String()[:18]
-	}
-
 	client, err := v.bigqueryClient(ctx)
 	if err != nil {
 		return err
@@ -159,8 +151,11 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 		ID      string `bigquery:"custom_id"`
 		Request string `bigquery:"request"`
 	}
-	rows := []vertexBatch{}
-	models := map[string]bool{}
+	var (
+		table  = batch.ID[:18]
+		rows   = []vertexBatch{}
+		models = map[string]bool{}
+	)
 	for i, u := range mag {
 		if u.Cin == nil {
 			return fmt.Errorf("magazine/%d: embeddings are %w", i, simp.ErrNotImplemented)
@@ -176,9 +171,9 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 	}
 	err = client.
 		Dataset(v.Dataset).
-		Table(batch.ID).
+		Table(table).
 		Create(ctx, &bigquery.TableMetadata{
-			Name: batch.ID,
+			Name: table,
 			Schema: bigquery.Schema{
 				{Name: "custom_id", Type: bigquery.StringFieldType},
 				{Name: "request", Type: bigquery.StringFieldType},
@@ -189,17 +184,16 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 	}
 	err = client.
 		Dataset(v.Dataset).
-		Table(batch.ID).
+		Table(table).
 		Inserter().
 		Put(ctx, rows)
 	if err != nil {
 		return fmt.Errorf("failed to insert batch: %w", err)
 	}
-	batch.Metadata = map[string]any{}
 	for model := range models {
 		batch.Metadata["model"] = model
 	}
-	batch.InputFileID = batch.ID
+	batch.InputFileID = table
 	return nil
 }
 
@@ -215,12 +209,13 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
 		// "maxOutputTokens": 200,
 	})
 
-	input := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, batch.ID)
-	output := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, "predict-"+batch.ID)
+	fid := batch.InputFileID
+	input := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, fid)
+	output := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, "predict-"+fid)
 	req := &aipb.CreateBatchPredictionJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", v.Project, v.Region),
 		BatchPredictionJob: &aipb.BatchPredictionJob{
-			DisplayName:     batch.ID,
+			DisplayName:     fid,
 			Model:           "publishers/google/models/" + batch.Metadata["model"].(string),
 			ModelParameters: params,
 			InputConfig: &aipb.BatchPredictionJob_InputConfig{
@@ -304,7 +299,7 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.
 	}
 	it := client.
 		Dataset(v.Dataset).
-		Table("predict-" + batch.ID).
+		Table("predict-" + batch.InputFileID).
 		Read(ctx)
 	for {
 		var row Row
@@ -348,7 +343,7 @@ func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) string {
 		Text string `json:"text"`
 	}
 	type content struct {
-		Role  string     `json:"role"`
+		Role  string     `json:"role,omitempty"`
 		Parts []textPart `json:"parts"`
 	}
 
@@ -358,7 +353,9 @@ func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) string {
 		role := msg.Role
 		switch role {
 		case "system":
-			// TODO: implement
+			req["system_instruction"] = content{
+				Parts: []textPart{{Text: msg.Content}},
+			}
 			continue
 		case "user":
 		case "assistant":
