@@ -152,7 +152,7 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 		Request string `bigquery:"request"`
 	}
 	var (
-		table  = batch.ID[:18]
+		table  = batch.ID
 		rows   = []vertexBatch{}
 		models = map[string]bool{}
 	)

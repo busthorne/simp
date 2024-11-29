@@ -56,6 +56,6 @@ func Open(sqlite string) {
 	DB = db
 }
 
-func Query() *Queries {
+func Session() *Queries {
 	return New(DB)
 }

@@ -8,12 +8,13 @@ package books
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 )
 
 const batchById = `-- name: BatchById :one
-select id, super, quo, body, created_at, updated_at, canceled_at from batch where id = ?
+select id, super, status, model, body, created_at, updated_at, completed_at, canceled_at from batch where id = ?
 `
 
 func (q *Queries) BatchById(ctx context.Context, id string) (Batch, error) {
@@ -22,49 +23,64 @@ func (q *Queries) BatchById(ctx context.Context, id string) (Batch, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Super,
-		&i.Quo,
+		&i.Status,
+		&i.Model,
 		&i.Body,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CompletedAt,
 		&i.CanceledAt,
 	)
 	return i, err
 }
 
+const cancelBatch = `-- name: CancelBatch :exec
+update batch
+set status = 'cancelled', canceled_at = current_timestamp
+where id = ?
+`
+
+func (q *Queries) CancelBatch(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, cancelBatch, id)
+	return err
+}
+
 const createBatch = `-- name: CreateBatch :exec
-insert into batch (id, super, quo, body) values (?, ?, ?, ?)
+insert into batch (id, super, status, model, body) values (?, ?, ?, ?, ?)
 `
 
 type CreateBatchParams struct {
-	ID    string
-	Super *string
-	Quo   openai.BatchStatus
-	Body  openai.Batch
+	ID     string
+	Super  *string
+	Status openai.BatchStatus
+	Model  string
+	Body   openai.Batch
 }
 
 func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) error {
 	_, err := q.db.ExecContext(ctx, createBatch,
 		arg.ID,
 		arg.Super,
-		arg.Quo,
+		arg.Status,
+		arg.Model,
 		arg.Body,
 	)
 	return err
 }
 
-const createBatchOp = `-- name: CreateBatchOp :exec
-insert into batch_op (batch, custom_id, op, request) values (?, ?, ?, ?)
+const createBatchDirect = `-- name: CreateBatchDirect :exec
+insert into batch_direct (batch, custom_id, op, request) values (?, ?, ?, ?)
 `
 
-type CreateBatchOpParams struct {
+type CreateBatchDirectParams struct {
 	Batch    string
 	CustomID string
 	Op       openai.BatchEndpoint
 	Request  json.RawMessage
 }
 
-func (q *Queries) CreateBatchOp(ctx context.Context, arg CreateBatchOpParams) error {
-	_, err := q.db.ExecContext(ctx, createBatchOp,
+func (q *Queries) CreateBatchDirect(ctx context.Context, arg CreateBatchDirectParams) error {
+	_, err := q.db.ExecContext(ctx, createBatchDirect,
 		arg.Batch,
 		arg.CustomID,
 		arg.Op,
@@ -85,7 +101,7 @@ func (q *Queries) Epoch(ctx context.Context) (int64, error) {
 }
 
 const subBatches = `-- name: SubBatches :many
-select id, super, quo, body, created_at, updated_at, canceled_at from batch where super = ? order by updated_at nulls first
+select id, super, status, model, body, created_at, updated_at, completed_at, canceled_at from batch where super = ? order by updated_at nulls first
 `
 
 func (q *Queries) SubBatches(ctx context.Context, super *string) ([]Batch, error) {
@@ -100,10 +116,12 @@ func (q *Queries) SubBatches(ctx context.Context, super *string) ([]Batch, error
 		if err := rows.Scan(
 			&i.ID,
 			&i.Super,
-			&i.Quo,
+			&i.Status,
+			&i.Model,
 			&i.Body,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CompletedAt,
 			&i.CanceledAt,
 		); err != nil {
 			return nil, err
@@ -117,4 +135,30 @@ func (q *Queries) SubBatches(ctx context.Context, super *string) ([]Batch, error
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateBatch = `-- name: UpdateBatch :exec
+update batch
+set body = ?,
+	status = ?,
+	updated_at = current_timestamp,
+	canceled_at = ?
+where id = ?
+`
+
+type UpdateBatchParams struct {
+	Body       openai.Batch
+	Status     openai.BatchStatus
+	CanceledAt *time.Time
+	ID         string
+}
+
+func (q *Queries) UpdateBatch(ctx context.Context, arg UpdateBatchParams) error {
+	_, err := q.db.ExecContext(ctx, updateBatch,
+		arg.Body,
+		arg.Status,
+		arg.CanceledAt,
+		arg.ID,
+	)
+	return err
 }

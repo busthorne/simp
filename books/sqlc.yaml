@@ -9,7 +9,7 @@ sql:
         out: "."
         emit_pointers_for_null_types: true
         overrides:
-          - column: "batch.quo"
+          - column: "batch.status"
             go_type:
               import: "github.com/sashabaranov/go-openai"
               package: "openai"
@@ -19,15 +19,15 @@ sql:
               import: "github.com/sashabaranov/go-openai"
               package: "openai"
               type: "Batch"
-          - column: "batch_op.request"
+          - column: "batch_direct.request"
             go_type:
               import: "encoding/json"
               type: "RawMessage"
-          - column: "batch_op.response"
+          - column: "batch_direct.response"
             go_type:
               import: "encoding/json"
               type: "RawMessage"
-          - column: "batch_op.op"
+          - column: "batch_direct.op"
             go_type:
               import: "github.com/sashabaranov/go-openai"
               package: "openai"

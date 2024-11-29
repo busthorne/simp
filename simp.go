@@ -32,6 +32,8 @@ var (
 	ErrNotFound = errors.New("model or alias is not found")
 	// ErrBatchIncomplete is returned when a batch is not completed.
 	ErrBatchIncomplete = errors.New("batch is incomplete")
+	// ErrBookkeeping is returned when bookkeeping fails.
+	ErrBookkeeping = errors.New("bookkeeping error")
 )
 
 func init() {

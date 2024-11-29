@@ -12,16 +12,18 @@ import (
 )
 
 type Batch struct {
-	ID         string
-	Super      *string
-	Quo        openai.BatchStatus
-	Body       openai.Batch
-	CreatedAt  time.Time
-	UpdatedAt  *time.Time
-	CanceledAt *time.Time
+	ID          string
+	Super       *string
+	Status      openai.BatchStatus
+	Model       string
+	Body        openai.Batch
+	CreatedAt   time.Time
+	UpdatedAt   *time.Time
+	CompletedAt *time.Time
+	CanceledAt  *time.Time
 }
 
-type BatchOp struct {
+type BatchDirect struct {
 	Batch       string
 	CustomID    string
 	Op          openai.BatchEndpoint

@@ -16,6 +16,10 @@ import (
 )
 
 func listen() *fiber.App {
+	nop := func(c *fiber.Ctx) error {
+		return notImplemented(c)
+	}
+
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
 	})
@@ -147,18 +151,12 @@ func listen() *fiber.App {
 		return nil
 	})
 	v1.Post("/files", batchUpload)
-	v1.Get("/batches", func(c *fiber.Ctx) error {
-		return notImplemented(c)
-	})
-	v1.Get("/batches/:id", func(c *fiber.Ctx) error {
-		return notImplemented(c)
-	})
-	v1.Post("/batches", func(c *fiber.Ctx) error {
-		return notImplemented(c)
-	})
-	v1.Post("/batches/:id/cancel", func(c *fiber.Ctx) error {
-		return notImplemented(c)
-	})
+	v1.Get("/files/:id/content", nop) // TODO: batchRecv
+	v1.Get("/batches", nop)
+	v1.Post("/batches", batchSend)
+	v1.Post("/batches/:id/cancel", batchCancel)
+	v1.Get("/batches/:id", batchRefresh)
+
 	addr := strings.Split(cfg.Daemon.ListenAddr, "://")
 	switch addr[0] {
 	case "https":

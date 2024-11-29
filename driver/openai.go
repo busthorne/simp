@@ -119,10 +119,10 @@ func (o *OpenAI) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
 }
 
 func (o *OpenAI) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.Magazine, err error) {
-	if batch.OutputFileID == nil {
+	if batch.OutputFileID == "" {
 		return nil, simp.ErrBatchIncomplete
 	}
-	f, err := o.GetFileContent(ctx, *batch.OutputFileID)
+	f, err := o.GetFileContent(ctx, batch.OutputFileID)
 	if err != nil {
 		return nil, fmt.Errorf("upstream: %w", err)
 	}
