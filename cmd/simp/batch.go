@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/books"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/sashabaranov/go-openai"
@@ -26,6 +27,8 @@ type BatchRequest struct {
 }
 
 func batchUpload(c *fiber.Ctx) error {
+	ctx := c.Context()
+
 	switch purpose := c.FormValue("purpose"); purpose {
 	case "batch":
 	default:
@@ -48,6 +51,8 @@ func batchUpload(c *fiber.Ctx) error {
 		mags = map[string]simp.Magazine{}
 		// will parse one request at a time
 		lines = json.NewDecoder(f)
+		// ids
+		ids = map[string]bool{}
 	)
 	for i := 1; ; i++ {
 		var req BatchRequest
@@ -63,6 +68,9 @@ func batchUpload(c *fiber.Ctx) error {
 			if req.ID == "" {
 				return malformed(errNoid)
 			}
+			if _, ok := ids[req.ID]; ok {
+				return malformed(fmt.Errorf("duplicate custom_id %q", req.ID))
+			}
 			switch req.Method {
 			case "":
 			case "POST":
@@ -70,6 +78,8 @@ func batchUpload(c *fiber.Ctx) error {
 			default:
 				return malformed(errBadMethod)
 			}
+
+			ids[req.ID] = true
 		case io.EOF:
 			goto eof
 		default:
@@ -136,23 +146,75 @@ func batchUpload(c *fiber.Ctx) error {
 	}
 
 eof:
+	tx, err := books.DB.BeginTx(c.Context(), nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	book := books.Query().WithTx(tx)
+	super := uuid.New().String()
+	err = book.CreateBatch(ctx, books.CreateBatchParams{
+		ID:  super,
+		Quo: openai.BatchStatusValidating,
+	})
+	if err != nil {
+		return fmt.Errorf("create super batch: %w", err)
+	}
+
 	for model, mag := range mags {
-		b := &simp.Batch{
+		b := openai.Batch{
 			ID:       uuid.New().String(),
 			Endpoint: mag.Endpoint(),
 		}
 
 		bd := drivers[model]
-		if bd == nil {
-			// TODO: implement special-case via bookkeeping
-			return fmt.Errorf("cannot batch model %q", model)
+		if bd != nil {
+			if err := bd.BatchUpload(ctx, &b, mag); err != nil {
+				return fmt.Errorf("batch upload failed for model %q: %w", model, err)
+			}
+		} else {
+			for _, u := range mag {
+				var body json.RawMessage
+				var op openai.BatchEndpoint
+				switch {
+				case u.Cin != nil:
+					op = openai.BatchEndpointChatCompletions
+					body, _ = json.Marshal(u.Cin)
+				case u.Ein != nil:
+					op = openai.BatchEndpointEmbeddings
+					body, _ = json.Marshal(u.Ein)
+				}
+				err := book.CreateBatchOp(ctx, books.CreateBatchOpParams{
+					Batch:    b.ID,
+					CustomID: u.Id,
+					Op:       op,
+					Request:  body,
+				})
+				if err != nil {
+					return fmt.Errorf("insert batch op: %w", err)
+				}
+			}
 		}
 
-		if err := bd.BatchUpload(c.Context(), b, mag); err != nil {
-			return fmt.Errorf("batch upload failed for model %q: %w", model, err)
+		err := book.CreateBatch(ctx, books.CreateBatchParams{
+			ID:    b.ID,
+			Super: &super,
+			Quo:   b.Status,
+			Body:  b,
+		})
+		if err != nil {
+			return fmt.Errorf("insert batch: %w", err)
 		}
 	}
-
-	// TODO: bookkeeping
-	return simp.ErrNotImplemented
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return c.JSON(openai.File{
+		ID:       super,
+		Object:   "file",
+		Bytes:    int(ff.Size),
+		FileName: ff.Filename,
+		Purpose:  "batch",
+	})
 }

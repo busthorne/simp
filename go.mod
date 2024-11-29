@@ -11,6 +11,7 @@ require (
 	cloud.google.com/go/bigquery v1.64.0
 	cloud.google.com/go/vertexai v0.13.2
 	github.com/anthropics/anthropic-sdk-go v0.2.0-alpha.4
+	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/busthorne/keyring v0.0.0-20241109160653-91d460dc46dd
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.2.1
@@ -21,6 +22,7 @@ require (
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.22.0
+	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/sashabaranov/go-openai v1.35.6
 	google.golang.org/api v0.203.0
 	google.golang.org/protobuf v1.35.1

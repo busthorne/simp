@@ -1,0 +1,34 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "query.sql"
+    schema: "schema"
+    gen:
+      go:
+        package: "books"
+        out: "."
+        emit_pointers_for_null_types: true
+        overrides:
+          - column: "batch.quo"
+            go_type:
+              import: "github.com/sashabaranov/go-openai"
+              package: "openai"
+              type: "BatchStatus"
+          - column: "batch.body"
+            go_type:
+              import: "github.com/sashabaranov/go-openai"
+              package: "openai"
+              type: "Batch"
+          - column: "batch_op.request"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+          - column: "batch_op.response"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+          - column: "batch_op.op"
+            go_type:
+              import: "github.com/sashabaranov/go-openai"
+              package: "openai"
+              type: "BatchEndpoint"
