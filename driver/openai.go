@@ -1,11 +1,8 @@
 package driver
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
@@ -30,7 +27,7 @@ type OpenAI struct {
 	config.Provider
 }
 
-func (o *OpenAI) List(ctx context.Context) ([]simp.Model, error) {
+func (o *OpenAI) List(ctx context.Context) ([]openai.Model, error) {
 	models, err := o.ListModels(ctx)
 	if err != nil {
 		return nil, err
@@ -38,54 +35,23 @@ func (o *OpenAI) List(ctx context.Context) ([]simp.Model, error) {
 	return models.Models, nil
 }
 
-func (o *OpenAI) Embed(ctx context.Context, req simp.Embed) (simp.Embeddings, error) {
+func (o *OpenAI) Embed(ctx context.Context, req openai.EmbeddingRequest) (e openai.EmbeddingResponse, err error) {
 	return o.CreateEmbeddings(ctx, req)
 }
 
-func (o *OpenAI) Complete(ctx context.Context, req simp.Complete) (simp.Completions, error) {
+func (o *OpenAI) Complete(ctx context.Context, req openai.CompletionRequest) (c openai.CompletionResponse, err error) {
+	return o.CreateCompletion(ctx, req)
+}
+
+func (o *OpenAI) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c openai.ChatCompletionResponse, err error) {
 	return o.CreateChatCompletion(ctx, req)
 }
 
-func (o *OpenAI) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Magazine) error {
-	switch {
-	case o.BaseURL != "" && !o.BatchAPI:
+func (o *OpenAI) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []openai.BatchInput) error {
+	if o.BaseURL != "" && !o.BatchAPI {
 		return simp.ErrNotImplemented
-	case len(mag) == 0:
-		return simp.ErrNotFound
 	}
-	b := bytes.Buffer{}
-	w := json.NewEncoder(&b)
-	for i, u := range mag {
-		var err error
-		switch {
-		case u.Cin != nil:
-			req := openai.BatchChatCompletionRequest{
-				CustomID: u.Id,
-				Body:     *u.Cin,
-				Method:   "POST",
-				URL:      openai.BatchEndpointChatCompletions,
-			}
-			err = w.Encode(req)
-		case u.Ein != nil:
-			req := openai.BatchEmbeddingRequest{
-				CustomID: u.Id,
-				Body:     *u.Ein,
-				Method:   "POST",
-				URL:      openai.BatchEndpointEmbeddings,
-			}
-			err = w.Encode(req)
-		default:
-			panic("unsupported batch op")
-		}
-		if err != nil {
-			return fmt.Errorf("magazine/%d: %w", i, err)
-		}
-	}
-	f, err := o.CreateFileBytes(ctx, openai.FileBytesRequest{
-		Name:    "batch.jsonl",
-		Bytes:   b.Bytes(),
-		Purpose: openai.PurposeBatch,
-	})
+	f, err := o.CreateFileBatch(ctx, inputs)
 	if err != nil {
 		return fmt.Errorf("upstream: %w", err)
 	}
@@ -93,7 +59,7 @@ func (o *OpenAI) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 	return nil
 }
 
-func (o *OpenAI) BatchSend(ctx context.Context, batch *simp.Batch) error {
+func (o *OpenAI) BatchSend(ctx context.Context, batch *openai.Batch) error {
 	if batch.InputFileID == "" {
 		panic("no input file id")
 	}
@@ -109,7 +75,7 @@ func (o *OpenAI) BatchSend(ctx context.Context, batch *simp.Batch) error {
 	return nil
 }
 
-func (o *OpenAI) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
+func (o *OpenAI) BatchRefresh(ctx context.Context, batch *openai.Batch) error {
 	b, err := o.RetrieveBatch(ctx, batch.ID)
 	if err != nil {
 		return fmt.Errorf("upstream: %w", err)
@@ -118,38 +84,14 @@ func (o *OpenAI) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
 	return nil
 }
 
-func (o *OpenAI) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.Magazine, err error) {
+func (o *OpenAI) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs []openai.BatchOutput, err error) {
 	if batch.OutputFileID == "" {
 		return nil, simp.ErrBatchIncomplete
 	}
-	f, err := o.GetFileContent(ctx, batch.OutputFileID)
-	if err != nil {
-		return nil, fmt.Errorf("upstream: %w", err)
-	}
-	r := json.NewDecoder(f)
-	for i := 0; ; i++ {
-		var u simp.BatchUnion
-		var err error
-		switch batch.Endpoint {
-		case openai.BatchEndpointChatCompletions:
-			err = r.Decode(&u.Cout)
-		case openai.BatchEndpointEmbeddings:
-			err = r.Decode(&u.Eout)
-		default:
-			panic("unsupported batch endpoint")
-		}
-		switch err {
-		case nil:
-			mag = append(mag, u)
-		case io.EOF:
-			return mag, nil
-		default:
-			return nil, fmt.Errorf("magazine/%d: %w", i, err)
-		}
-	}
+	return o.GetBatchContent(ctx, batch.OutputFileID)
 }
 
-func (o *OpenAI) BatchCancel(ctx context.Context, batch *simp.Batch) error {
+func (o *OpenAI) BatchCancel(ctx context.Context, batch *openai.Batch) error {
 	b, err := o.CancelBatch(ctx, batch.ID)
 	if err != nil {
 		return fmt.Errorf("upstream: %w", err)

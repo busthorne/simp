@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	aiplatform "cloud.google.com/go/aiplatform/apiv1"
+	aipl "cloud.google.com/go/aiplatform/apiv1"
 	aipb "cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/vertexai/genai"
@@ -24,9 +24,6 @@ func NewVertex(p config.Provider) (*Vertex, error) {
 	if len(b) > 0 {
 		p.APIKey = string(b)
 	}
-	if p.Dataset == "" {
-		p.Dataset = "simpbatches"
-	}
 	return &Vertex{p}, nil
 }
 
@@ -35,10 +32,10 @@ type Vertex struct {
 	config.Provider
 }
 
-func (v *Vertex) List(ctx context.Context) ([]simp.Model, error) {
+func (v *Vertex) List(ctx context.Context) ([]openai.Model, error) {
 	// Vertex AI doesn't have a direct model listing API
 	// Return predefined list of available models
-	return []simp.Model{
+	return []openai.Model{
 		{ID: "gemini-1.5-flash-001"},
 		{ID: "gemini-1.5-flash-002"},
 		{ID: "gemini-1.5-pro-001"},
@@ -48,15 +45,81 @@ func (v *Vertex) List(ctx context.Context) ([]simp.Model, error) {
 	}, nil
 }
 
-func (v *Vertex) Embed(ctx context.Context, req simp.Embed) (simp.Embeddings, error) {
-	return simp.Embeddings{}, simp.ErrNotImplemented
+func (v *Vertex) Embed(ctx context.Context, req openai.EmbeddingRequest) (e openai.EmbeddingResponse, ret error) {
+	var texts []string
+	switch input := req.Input.(type) {
+	case string:
+		texts = []string{input}
+	case []string:
+		texts = input
+	default:
+		return e, simp.ErrUnsupportedInput
+	}
+
+	client, err := v.predictionClient(ctx)
+	if err != nil {
+		return e, err
+	}
+	defer client.Close()
+
+	instances := make([]*structpb.Value, len(texts))
+	for i, text := range texts {
+		fields := map[string]*structpb.Value{
+			"content": structpb.NewStringValue(text),
+		}
+		if req.Task != "" {
+			fields["task_type"] = structpb.NewStringValue(req.Task)
+		}
+		instances[i] = structpb.NewStructValue(&structpb.Struct{Fields: fields})
+	}
+	params := structpb.NewStructValue(&structpb.Struct{
+		Fields: map[string]*structpb.Value{
+			"outputDimensionality": structpb.NewNumberValue(float64(req.Dimensions)),
+		},
+	})
+	resp, err := client.Predict(ctx, &aipb.PredictRequest{
+		Endpoint: fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s",
+			v.Project,
+			v.Region,
+			req.Model,
+		),
+		Instances:  instances,
+		Parameters: params,
+	})
+	if err != nil {
+		return e, err
+	}
+	for i, prediction := range resp.Predictions {
+		values := prediction.
+			GetStructValue().
+			Fields["embeddings"].
+			GetStructValue().
+			Fields["values"].
+			GetListValue().
+			Values
+		vector := make([]float32, len(values))
+		for j, value := range values {
+			vector[j] = float32(value.GetNumberValue())
+		}
+		e.Data = append(e.Data, openai.Embedding{
+			Index:     i,
+			Embedding: vector,
+		})
+	}
+	return
 }
 
-func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Completions, err error) {
-	client, err := v.client(ctx)
+func (v *Vertex) Complete(ctx context.Context, req openai.CompletionRequest) (c openai.CompletionResponse, err error) {
+	return c, simp.ErrNotImplemented
+}
+
+func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c openai.ChatCompletionResponse, err error) {
+	client, err := v.genaiClient(ctx)
 	if err != nil {
 		return c, err
 	}
+	defer client.Close()
+
 	model := client.GenerativeModel(req.Model)
 	cs := model.StartChat()
 	h := []*genai.Content{}
@@ -140,7 +203,7 @@ func (v *Vertex) Complete(ctx context.Context, req simp.Complete) (c simp.Comple
 	return c, nil
 }
 
-func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Magazine) error {
+func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []openai.BatchInput) error {
 	client, err := v.bigqueryClient(ctx)
 	if err != nil {
 		return err
@@ -156,17 +219,17 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 		rows   = []vertexBatch{}
 		models = map[string]bool{}
 	)
-	for i, u := range mag {
-		if u.Cin == nil {
-			return fmt.Errorf("magazine/%d: embeddings are %w", i, simp.ErrNotImplemented)
+	for _, i := range inputs {
+		if i.ChatCompletion == nil {
+			return fmt.Errorf("embeddings are not supported")
 		}
-		models[u.Cin.Model] = true
+		models[i.ChatCompletion.Model] = true
 		if len(models) > 1 {
 			return fmt.Errorf("all completions must use the same model")
 		}
 		rows = append(rows, vertexBatch{
-			ID:      u.Id,
-			Request: v.serializeRequest(u.Cin),
+			ID:      i.CustomID,
+			Request: v.serializeRequest(i.ChatCompletion),
 		})
 	}
 	err = client.
@@ -197,27 +260,38 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *simp.Batch, mag simp.Ma
 	return nil
 }
 
-func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
+func (v *Vertex) BatchSend(ctx context.Context, batch *openai.Batch) error {
 	client, err := v.jobClient(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	params, _ := structpb.NewValue(map[string]interface{}{
-		// "temperature":     0.2,
-		// "maxOutputTokens": 200,
-	})
+	var params *structpb.Value
+	if p, ok := batch.Metadata["model_parameters"]; ok {
+		params, err = structpb.NewValue(p)
+		if err != nil {
+			return fmt.Errorf("cannot marshal model parameters: %w", err)
+		}
+	}
 
-	fid := batch.InputFileID
-	input := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, fid)
-	output := fmt.Sprintf("bq://%s.%s.%s", v.Project, v.Dataset, "predict-"+fid)
-	req := &aipb.CreateBatchPredictionJobRequest{
+	ifd := batch.InputFileID
+	input := fmt.Sprintf("bq://%s.%s.%s",
+		v.Project,
+		v.Dataset,
+		ifd,
+	)
+	output := fmt.Sprintf("bq://%s.%s.%s",
+		v.Project,
+		v.Dataset,
+		"predict-"+ifd,
+	)
+	req := aipb.CreateBatchPredictionJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", v.Project, v.Region),
 		BatchPredictionJob: &aipb.BatchPredictionJob{
-			DisplayName:     fid,
-			Model:           "publishers/google/models/" + batch.Metadata["model"].(string),
+			DisplayName:     ifd,
 			ModelParameters: params,
+			Model:           "publishers/google/models/" + batch.Metadata["model"].(string),
 			InputConfig: &aipb.BatchPredictionJob_InputConfig{
 				Source: &aipb.BatchPredictionJob_InputConfig_BigquerySource{
 					BigquerySource: &aipb.BigQuerySource{InputUri: input},
@@ -232,7 +306,7 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
 			},
 		},
 	}
-	job, err := client.CreateBatchPredictionJob(ctx, req)
+	job, err := client.CreateBatchPredictionJob(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("cannot create job: %w", err)
 	}
@@ -243,16 +317,17 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *simp.Batch) error {
 	return nil
 }
 
-func (v *Vertex) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
+func (v *Vertex) BatchRefresh(ctx context.Context, batch *openai.Batch) error {
 	client, err := v.jobClient(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	job, err := client.GetBatchPredictionJob(ctx, &aipb.GetBatchPredictionJobRequest{
+	req := aipb.GetBatchPredictionJobRequest{
 		Name: batch.Metadata["job"].(string),
-	})
+	}
+	job, err := client.GetBatchPredictionJob(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("cannot get job: %w", err)
 	}
@@ -262,7 +337,7 @@ func (v *Vertex) BatchRefresh(ctx context.Context, batch *simp.Batch) error {
 	return nil
 }
 
-func (v *Vertex) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.Magazine, err error) {
+func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs []openai.BatchOutput, err error) {
 	client, err := v.bigqueryClient(ctx)
 	if err != nil {
 		return nil, err
@@ -310,17 +385,15 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.
 				continue
 			}
 		case iterator.Done:
-			return mag, nil
+			return outputs, nil
 		default:
 			return nil, fmt.Errorf("cannot read from table: %w", err)
 		}
-
 		var resp Response
 		if err := json.Unmarshal([]byte(row.Response), &resp); err != nil {
 			return nil, fmt.Errorf("cannot unmarshal response/%s: %w", row.ID, err)
 		}
-
-		bullet := openai.ChatCompletionResponse{ID: row.ID}
+		output := &openai.ChatCompletionResponse{ID: row.ID}
 		for _, can := range resp.Candidates {
 			c := openai.ChatCompletionChoice{
 				Message: openai.ChatCompletionMessage{
@@ -328,14 +401,25 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *simp.Batch) (mag simp.
 					Content: can.Content.Parts[0].Text,
 				},
 			}
-			bullet.Choices = append(bullet.Choices, c)
+			output.Choices = append(output.Choices, c)
 		}
-		mag = append(mag, simp.BatchUnion{Cout: &bullet})
+		outputs = append(outputs, openai.BatchOutput{
+			CustomID:       row.ID,
+			ChatCompletion: output,
+		})
 	}
 }
 
-func (v *Vertex) BatchCancel(ctx context.Context, batch *simp.Batch) error {
-	return simp.ErrNotImplemented
+func (v *Vertex) BatchCancel(ctx context.Context, batch *openai.Batch) error {
+	client, err := v.jobClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	req := &aipb.CancelBatchPredictionJobRequest{
+		Name: batch.Metadata["job"].(string),
+	}
+	return client.CancelBatchPredictionJob(ctx, req)
 }
 
 func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) string {
@@ -375,7 +459,7 @@ func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) string {
 	return string(b)
 }
 
-func (v *Vertex) updateStatus(batch *simp.Batch, state aipb.JobState) {
+func (v *Vertex) updateStatus(batch *openai.Batch, state aipb.JobState) {
 	switch state {
 	case aipb.JobState_JOB_STATE_SUCCEEDED, aipb.JobState_JOB_STATE_PARTIALLY_SUCCEEDED:
 		batch.Status = openai.BatchStatusCompleted
@@ -396,7 +480,7 @@ func (v *Vertex) updateStatus(batch *simp.Batch, state aipb.JobState) {
 	}
 }
 
-func (v *Vertex) client(ctx context.Context) (*genai.Client, error) {
+func (v *Vertex) genaiClient(ctx context.Context) (*genai.Client, error) {
 	client, err := genai.NewClient(ctx,
 		v.Project,
 		v.Region,
@@ -407,10 +491,19 @@ func (v *Vertex) client(ctx context.Context) (*genai.Client, error) {
 	return client, nil
 }
 
-func (v *Vertex) jobClient(ctx context.Context) (*aiplatform.JobClient, error) {
-	endpoint := fmt.Sprintf("%s-aiplatform.googleapis.com:443", v.Region)
-	client, err := aiplatform.NewJobClient(ctx,
-		option.WithEndpoint(endpoint),
+func (v *Vertex) predictionClient(ctx context.Context) (*aipl.PredictionClient, error) {
+	client, err := aipl.NewPredictionClient(ctx,
+		option.WithEndpoint(v.Region+"-aiplatform.googleapis.com:443"),
+		v.credentials())
+	if err != nil {
+		return nil, fmt.Errorf("cannot make client: %w", err)
+	}
+	return client, nil
+}
+
+func (v *Vertex) jobClient(ctx context.Context) (*aipl.JobClient, error) {
+	client, err := aipl.NewJobClient(ctx,
+		option.WithEndpoint(v.Region+"-aiplatform.googleapis.com:443"),
 		v.credentials())
 	if err != nil {
 		return nil, fmt.Errorf("cannot make job client: %w", err)

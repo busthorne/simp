@@ -4,18 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-
-	"github.com/sashabaranov/go-openai"
-)
-
-// I hate long type names.
-type (
-	Model       = openai.Model
-	Complete    = openai.ChatCompletionRequest
-	Completions = openai.ChatCompletionResponse
-	Embed       = openai.EmbeddingRequest
-	Embeddings  = openai.EmbeddingResponse
-	Batch       = openai.Batch
 )
 
 var (
@@ -26,12 +14,16 @@ var (
 	ErrNotImplemented = errors.New("not implemented")
 	// ErrUnsupportedMime is usually returned when a driver does not support image type.
 	ErrUnsupportedMime = errors.New("mime type is not supported")
+	// ErrUnsupportedInput is returned when the input type is not supported.
+	ErrUnsupportedInput = errors.New("input type is not supported")
 	// ErrUnsupportedRole is returned when role is neither "user" nor "assistant".
 	ErrUnsupportedRole = errors.New("role is not supported")
 	// ErrNotFound is returned when a model or alias is not found.
 	ErrNotFound = errors.New("model or alias is not found")
 	// ErrBatchIncomplete is returned when a batch is not completed.
 	ErrBatchIncomplete = errors.New("batch is incomplete")
+	// ErrBatchDeferred is returned when the provider must defer a batch until send time.
+	ErrBatchDeferred = errors.New("batch must be deferred until send time")
 	// ErrBookkeeping is returned when bookkeeping fails.
 	ErrBookkeeping = errors.New("bookkeeping error")
 )

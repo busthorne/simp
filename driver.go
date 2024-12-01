@@ -8,9 +8,10 @@ import (
 
 // Driver is a roughly OpenAI-compatible inference backend.
 type Driver interface {
-	List(context.Context) ([]Model, error)
-	Embed(context.Context, Embed) (Embeddings, error)
-	Complete(context.Context, Complete) (Completions, error)
+	List(context.Context) ([]openai.Model, error)
+	Embed(context.Context, openai.EmbeddingRequest) (openai.EmbeddingResponse, error)
+	Complete(context.Context, openai.CompletionRequest) (openai.CompletionResponse, error)
+	Chat(context.Context, openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error)
 }
 
 // BatchDriver is a driver that supports some variant of Batch API.
@@ -18,39 +19,13 @@ type Driver interface {
 // Think OpenAI, Anthropic, Vertex, etc.
 type BatchDriver interface {
 	// Usually: validate input and upload vendor-specific JSONL
-	BatchUpload(context.Context, *Batch, Magazine) error
+	BatchUpload(context.Context, *openai.Batch, []openai.BatchInput) error
 	// Schedule the batch for execution with the provider
-	BatchSend(context.Context, *Batch) error
+	BatchSend(context.Context, *openai.Batch) error
 	// Update the status on the batch
-	BatchRefresh(context.Context, *Batch) error
+	BatchRefresh(context.Context, *openai.Batch) error
 	// Usually: download the file (JSONL) and convert to OpenAI format
-	BatchReceive(context.Context, *Batch) (Magazine, error)
+	BatchReceive(context.Context, *openai.Batch) ([]openai.BatchOutput, error)
 	// Cancel the batch, if possible
-	BatchCancel(context.Context, *Batch) error
-}
-
-// BatchUnion is a union type of possible batch inputs and outputs.
-type BatchUnion struct {
-	Id   string
-	Cin  *Complete
-	Ein  *Embed
-	Cout *Completions
-	Eout *Embeddings
-}
-
-// Magazine is a batch content-vector: one shoe fits all.
-type Magazine []BatchUnion
-
-func (m Magazine) Endpoint() openai.BatchEndpoint {
-	if len(m) == 0 {
-		panic("empty magazine")
-	}
-	switch {
-	case m[0].Cin != nil:
-		return openai.BatchEndpointChatCompletions
-	case m[0].Ein != nil:
-		return openai.BatchEndpointEmbeddings
-	default:
-		panic("unsupported batch op")
-	}
+	BatchCancel(context.Context, *openai.Batch) error
 }

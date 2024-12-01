@@ -34,6 +34,42 @@ func (q *Queries) BatchById(ctx context.Context, id string) (Batch, error) {
 	return i, err
 }
 
+const batchDirectCompleted = `-- name: BatchDirectCompleted :many
+select
+	custom_id,
+	response
+from batch_direct
+where batch = ? and completed_at is not null
+`
+
+type BatchDirectCompletedRow struct {
+	CustomID string
+	Response json.RawMessage
+}
+
+func (q *Queries) BatchDirectCompleted(ctx context.Context, batch string) ([]BatchDirectCompletedRow, error) {
+	rows, err := q.db.QueryContext(ctx, batchDirectCompleted, batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BatchDirectCompletedRow
+	for rows.Next() {
+		var i BatchDirectCompletedRow
+		if err := rows.Scan(&i.CustomID, &i.Response); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const cancelBatch = `-- name: CancelBatch :exec
 update batch
 set status = 'cancelled', canceled_at = current_timestamp
@@ -106,6 +142,43 @@ select id, super, status, model, body, created_at, updated_at, completed_at, can
 
 func (q *Queries) SubBatches(ctx context.Context, super *string) ([]Batch, error) {
 	rows, err := q.db.QueryContext(ctx, subBatches, super)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Batch
+	for rows.Next() {
+		var i Batch
+		if err := rows.Scan(
+			&i.ID,
+			&i.Super,
+			&i.Status,
+			&i.Model,
+			&i.Body,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+			&i.CanceledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const subBatchesCompleted = `-- name: SubBatchesCompleted :many
+select id, super, status, model, body, created_at, updated_at, completed_at, canceled_at from batch where super = ? and status = 'completed'
+`
+
+func (q *Queries) SubBatchesCompleted(ctx context.Context, super *string) ([]Batch, error) {
+	rows, err := q.db.QueryContext(ctx, subBatchesCompleted, super)
 	if err != nil {
 		return nil, err
 	}

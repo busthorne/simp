@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/busthorne/simp"
+	"github.com/sashabaranov/go-openai"
 )
 
 func cabling(prompt string) error {
@@ -57,7 +58,7 @@ func promptComplete() error {
 		fmt.Println()
 		fmt.Printf("%s%s %s\n", ws, simp.MarkAsst, model.ShortestAlias())
 	}
-	resp, err := drv.Complete(bg, simp.Complete{
+	resp, err := drv.Chat(bg, openai.ChatCompletionRequest{
 		Stream:           !*discrete,
 		Model:            model.Name,
 		Messages:         cable.Messages(),

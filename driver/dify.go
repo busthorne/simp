@@ -19,17 +19,16 @@ type Dify struct {
 	Provider config.Provider
 }
 
-func (o *Dify) List(ctx context.Context) ([]simp.Model, error) {
+func (o *Dify) List(ctx context.Context) ([]openai.Model, error) {
 	return nil, simp.ErrNotImplemented
 }
 
-func (o *Dify) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, err error) {
+func (o *Dify) Embed(ctx context.Context, req openai.EmbeddingRequest) (e openai.EmbeddingResponse, err error) {
 	err = simp.ErrNotImplemented
 	return
 }
 
-func (o *Dify) Complete(ctx context.Context, req simp.Complete) (*simp.Completions, error) {
-	c := &simp.Completions{}
+func (o *Dify) Complete(ctx context.Context, req openai.ChatCompletionRequest) (c openai.ChatCompletionResponse, err error) {
 	// TODO: get user, conversation_id from some state
 	difyReq := &dify.ChatMessageRequest{
 		Inputs:         map[string]any{},

@@ -26,20 +26,49 @@ type Gemini struct {
 	p       config.Provider
 }
 
-func (g *Gemini) List(ctx context.Context) ([]simp.Model, error) {
+func (g *Gemini) List(ctx context.Context) ([]openai.Model, error) {
 	// Gemini currently has limited models, so we'll return a static list
-	return []simp.Model{
+	return []openai.Model{
 		{ID: "gemini-pro"},
 		{ID: "gemini-pro-vision"},
 	}, nil
 }
 
-func (g *Gemini) Embed(ctx context.Context, req simp.Embed) (e simp.Embeddings, err error) {
-	err = simp.ErrNotImplemented
-	return
+func (g *Gemini) Embed(ctx context.Context, req openai.EmbeddingRequest) (e openai.EmbeddingResponse, err error) {
+	client, err := genai.NewClient(ctx, g.options...)
+	if err != nil {
+		return e, err
+	}
+	model := client.EmbeddingModel(req.Model)
+	batch := model.NewBatch()
+	switch input := req.Input.(type) {
+	case string:
+		batch.AddContent(genai.Text(input))
+	case []string:
+		for _, s := range input {
+			batch.AddContent(genai.Text(s))
+		}
+	default:
+		return e, simp.ErrUnsupportedInput
+	}
+	resp, err := model.BatchEmbedContents(ctx, batch)
+	if err != nil {
+		return e, err
+	}
+	for i, embedding := range resp.Embeddings {
+		e.Data = append(e.Data, openai.Embedding{
+			Index:     i,
+			Embedding: embedding.Values,
+		})
+	}
+	return e, nil
 }
 
-func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (c simp.Completions, err error) {
+func (g *Gemini) Complete(ctx context.Context, req openai.CompletionRequest) (c openai.CompletionResponse, err error) {
+	return c, simp.ErrNotImplemented
+}
+
+func (g *Gemini) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c openai.ChatCompletionResponse, err error) {
 	client, err := genai.NewClient(ctx, g.options...)
 	if err != nil {
 		return c, err
@@ -99,8 +128,9 @@ func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (c simp.Comple
 	default:
 		return c, fmt.Errorf("thread must end with a user message")
 	}
-
-	if !req.Stream {
+	if req.Stream {
+		c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
+	} else {
 		resp, err := chat.SendMessage(ctx, prompt.Parts...)
 		if err != nil {
 			return c, err
@@ -114,8 +144,6 @@ func (g *Gemini) Complete(ctx context.Context, req simp.Complete) (c simp.Comple
 		}
 		return c, nil
 	}
-
-	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
 		defer close(c.Stream)
 		iter := chat.SendMessageStream(ctx, prompt.Parts...)

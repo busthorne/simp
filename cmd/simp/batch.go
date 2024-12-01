@@ -19,14 +19,6 @@ var (
 	errMeatNorFish = fmt.Errorf("neither a chat completion nor an embedding")
 )
 
-type BatchRequest struct {
-	ID        string          `json:"custom_id"`
-	Method    string          `json:"method"`
-	URL       string          `json:"url"`
-	MaxTokens int             `json:"max_tokens,omitempty"`
-	Body      json.RawMessage `json:"body,omitempty"`
-}
-
 func batchUpload(c *fiber.Ctx) error {
 	ctx := c.Context()
 
@@ -49,28 +41,28 @@ func batchUpload(c *fiber.Ctx) error {
 		// driver (nil, if doesn't support batching) by model name
 		drivers = map[string]simp.BatchDriver{}
 		// magazine by model name
-		mags = map[string]simp.Magazine{}
+		inputs = map[string][]openai.BatchInput{}
 		// will parse one request at a time
 		lines = json.NewDecoder(f)
 		// ids
 		ids = map[string]bool{}
 	)
 	for i := 1; ; i++ {
-		var req BatchRequest
+		var req openai.BatchInput
 
 		// a bit of a courtesy handler
 		malformed := func(err error) error {
-			return fmt.Errorf("request %s/%d is malformed: %w", req.ID, i, err)
+			return fmt.Errorf("request %s/%d is malformed: %w", req.CustomID, i, err)
 		}
 
 		// preliminary validation
 		switch err := lines.Decode(&req); err {
 		case nil:
-			if req.ID == "" {
+			if req.CustomID == "" {
 				return malformed(errNoid)
 			}
-			if _, ok := ids[req.ID]; ok {
-				return malformed(fmt.Errorf("duplicate custom_id %q", req.ID))
+			if _, ok := ids[req.CustomID]; ok {
+				return malformed(fmt.Errorf("duplicate custom_id %q", req.CustomID))
 			}
 			switch req.Method {
 			case "":
@@ -80,7 +72,7 @@ func batchUpload(c *fiber.Ctx) error {
 				return malformed(errBadMethod)
 			}
 
-			ids[req.ID] = true
+			ids[req.CustomID] = true
 		case io.EOF:
 			goto eof
 		default:
@@ -88,23 +80,18 @@ func batchUpload(c *fiber.Ctx) error {
 		}
 
 		// mags consist of batch-unions of chat/embedding input/output
-		u := simp.BatchUnion{Id: req.ID}
+		i := openai.BatchInput{CustomID: req.CustomID}
+
 		model := ""
-		// conditional unmarshal
 		switch openai.BatchEndpoint(req.URL) {
 		case openai.BatchEndpointChatCompletions:
-			if err = json.Unmarshal(req.Body, &u.Cin); err != nil {
-				return malformed(err)
-			}
-			model = u.Cin.Model
+			model = i.ChatCompletion.Model
 		case openai.BatchEndpointEmbeddings:
-			if err = json.Unmarshal(req.Body, &u.Ein); err != nil {
-				return malformed(err)
-			}
-			model = u.Ein.Model
+			model = i.Embedding.Model
 		default:
 			return malformed(errMeatNorFish)
 		}
+
 		// TODO: add alias cache in findWaldo
 		d, m, err := findWaldo(model)
 		if err != nil {
@@ -116,12 +103,12 @@ func batchUpload(c *fiber.Ctx) error {
 		}
 		// contextual validation
 		switch {
-		case u.Cin != nil:
+		case i.ChatCompletion != nil:
 			if m.Embedding {
 				return malformed(fmt.Errorf("model %q is not a chat model", model))
 			}
 			alt := ""
-			for i, m := range u.Cin.Messages {
+			for i, m := range i.ChatCompletion.Messages {
 				switch m.Role {
 				case "system":
 					if i != 0 {
@@ -136,16 +123,16 @@ func batchUpload(c *fiber.Ctx) error {
 				}
 				alt = m.Role
 			}
-			u.Cin.Model = m.Name
-		case u.Ein != nil:
+			i.ChatCompletion.Model = m.Name
+		case i.Embedding != nil:
 			if !m.Embedding {
 				return malformed(fmt.Errorf("model %q is not an embedding model", model))
 			}
-			u.Ein.Model = m.Name
+			i.Embedding.Model = m.Name
 		default:
 			panic("unsupported batch op")
 		}
-		mags[model] = append(mags[model], u)
+		inputs[model] = append(inputs[model], i)
 	}
 
 	// the aggregate batch has been partitioned
@@ -165,14 +152,14 @@ eof:
 		return fmt.Errorf("create super batch: %w", err)
 	}
 
-	for model, mag := range mags {
+	for model, input := range inputs {
 		bd, ok := drivers[model]
 		if ok {
 			b := openai.Batch{
 				ID:       uuid.New().String(),
-				Endpoint: mag.Endpoint(),
+				Endpoint: input[0].URL,
 			}
-			switch err := bd.BatchUpload(ctx, &b, mag); err {
+			switch err := bd.BatchUpload(ctx, &b, input); err {
 			// i.e. openai-compatible providers
 			case simp.ErrNotImplemented:
 			case nil:
@@ -194,22 +181,22 @@ eof:
 		}
 
 		// if batching is not supported, create a batch op for each request
-		for _, u := range mag {
+		for _, u := range input {
 			var body json.RawMessage
 			var op openai.BatchEndpoint
 			switch {
-			case u.Cin != nil:
+			case u.ChatCompletion != nil:
 				op = openai.BatchEndpointChatCompletions
-				body, _ = json.Marshal(u.Cin)
-			case u.Ein != nil:
+				body, _ = json.Marshal(u.ChatCompletion)
+			case u.Embedding != nil:
 				op = openai.BatchEndpointEmbeddings
-				body, _ = json.Marshal(u.Ein)
+				body, _ = json.Marshal(u.Embedding)
 			default:
 				panic("unsupported batch op")
 			}
 			err := book.CreateBatchDirect(ctx, books.CreateBatchDirectParams{
 				Batch:    super,
-				CustomID: u.Id,
+				CustomID: u.CustomID,
 				Op:       op,
 				Request:  body,
 			})
@@ -339,4 +326,51 @@ func batchRefresh(c *fiber.Ctx) error {
 
 	// TODO: check sub-batches and direct ops
 	return simp.ErrNotImplemented
+}
+
+func batchRecv(c *fiber.Ctx) error {
+	ctx := c.Context()
+	book := books.Session()
+	sid := c.Params("id")
+	rows, err := book.SubBatchesCompleted(ctx, &sid)
+	if err != nil {
+		return fmt.Errorf("batch not found: %w", err)
+	}
+	c.Set("Content-Type", "application/jsonl")
+	w := json.NewEncoder(c.Response().BodyWriter())
+	for _, row := range rows {
+		batch := row.Body
+		d, _, err := findWaldo(row.Model)
+		if err != nil {
+			continue
+		}
+		bd, ok := d.(simp.BatchDriver)
+		if !ok {
+			continue
+		}
+		mag, err := bd.BatchReceive(ctx, &batch)
+		if err != nil {
+			continue
+		}
+		for _, u := range mag {
+			switch {
+			case u.ChatCompletion != nil:
+				w.Encode(u.ChatCompletion)
+			case u.Embedding != nil:
+				w.Encode(u.Embedding)
+			default:
+				continue
+			}
+		}
+	}
+	{
+		rows, err := book.BatchDirectCompleted(ctx, sid)
+		if err != nil {
+			return fmt.Errorf("batch not found: %w", err)
+		}
+		for _, row := range rows {
+			w.Encode(row.Response)
+		}
+	}
+	return nil
 }

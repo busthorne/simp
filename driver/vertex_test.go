@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
 	"github.com/google/uuid"
 	"github.com/sashabaranov/go-openai"
@@ -27,11 +26,11 @@ func vertex() *Vertex {
 
 const vertexModel = "gemini-1.5-pro-002"
 
-var prompts = func(user ...string) (mag simp.Magazine) {
+var prompts = func(user ...string) (inputs []openai.BatchInput) {
 	for _, u := range user {
-		mag = append(mag, simp.BatchUnion{
-			Id: strings.ReplaceAll(uuid.New().String(), "-", "")[:10],
-			Cin: &openai.ChatCompletionRequest{
+		inputs = append(inputs, openai.BatchInput{
+			CustomID: strings.ReplaceAll(uuid.New().String(), "-", "")[:10],
+			ChatCompletion: &openai.ChatCompletionRequest{
 				Model: vertexModel,
 				Messages: []openai.ChatCompletionMessage{
 					{Role: openai.ChatMessageRoleUser, Content: u},
@@ -47,12 +46,12 @@ func TestVertexBatchUpload(t *testing.T) {
 		t.Skip()
 	}
 	v := vertex()
-	b := &simp.Batch{}
+	b := openai.Batch{}
 	mag := prompts(
 		"Who is the president of Ukraine?",
 		"Хто президент України?",
 	)
-	if err := v.BatchUpload(context.Background(), b, mag); err != nil {
+	if err := v.BatchUpload(context.Background(), &b, mag); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("batch id:", b.ID)
@@ -64,13 +63,13 @@ func TestVertexBatchSend(t *testing.T) {
 		t.Skip()
 	}
 	v := vertex()
-	b := &simp.Batch{
+	b := openai.Batch{
 		ID: id,
 		Metadata: map[string]any{
 			"model": vertexModel,
 		},
 	}
-	if err := v.BatchSend(context.Background(), b); err != nil {
+	if err := v.BatchSend(context.Background(), &b); err != nil {
 		t.Fatal(err)
 	}
 	t.Log(b.Metadata)
@@ -90,17 +89,17 @@ func TestVertexBatchReceive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &simp.Batch{
+	b := openai.Batch{
 		ID: id,
 		Metadata: map[string]any{
 			"job": id,
 		},
 	}
-	mag, err := v.BatchReceive(context.Background(), b)
+	mag, err := v.BatchReceive(context.Background(), &b)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, u := range mag {
-		t.Log(u.Cout.Choices[0].Message.Content)
+		t.Log(u.ChatCompletion.Choices[0].Message.Content)
 	}
 }

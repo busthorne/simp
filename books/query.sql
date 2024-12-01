@@ -5,10 +5,18 @@ select epoch from migration;
 select * from batch where id = ?;
 -- name: SubBatches :many
 select * from batch where super = ? order by updated_at nulls first;
+-- name: SubBatchesCompleted :many
+select * from batch where super = ? and status = 'completed';
 -- name: CreateBatch :exec
 insert into batch (id, super, status, model, body) values (?, ?, ?, ?, ?);
 -- name: CreateBatchDirect :exec
 insert into batch_direct (batch, custom_id, op, request) values (?, ?, ?, ?);
+-- name: BatchDirectCompleted :many
+select
+	custom_id,
+	response
+from batch_direct
+where batch = ? and completed_at is not null;
 -- name: UpdateBatch :exec
 update batch
 set body = ?,

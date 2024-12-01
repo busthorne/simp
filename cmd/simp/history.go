@@ -10,6 +10,7 @@ import (
 
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
+	"github.com/sashabaranov/go-openai"
 )
 
 const annotation = `Create a dash-separated slug that describes this conversation.
@@ -41,7 +42,7 @@ func saveHistory() {
 		} else {
 			cable.Thread[0] = task
 		}
-		resp, err := drv.Complete(bg, simp.Complete{
+		resp, err := drv.Chat(bg, openai.ChatCompletionRequest{
 			Model:    m.Name,
 			Messages: cable.Messages(),
 		})

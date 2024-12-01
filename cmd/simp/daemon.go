@@ -83,6 +83,11 @@ func listen() *fiber.App {
 		if err != nil {
 			return internalError(c, err)
 		}
+		resp.Model = openai.EmbeddingModel(model.Name)
+		resp.Object = "list"
+		for i := range resp.Data {
+			resp.Data[i].Object = "embedding"
+		}
 		return c.JSON(resp)
 	})
 	v1.Post("/chat/completions", func(c *fiber.Ctx) error {
@@ -96,11 +101,13 @@ func listen() *fiber.App {
 		}
 		log.Debugf("completion model %s (%T)\n", model.Name, drv)
 		req.Model = model.Name
-		resp, err := drv.Complete(c.Context(), req)
+		resp, err := drv.Chat(c.Context(), req)
 		if err != nil {
 			return internalError(c, err)
 		}
 		if !req.Stream {
+			resp.Object = "chat.completion"
+			resp.Model = model.Name
 			return c.JSON(resp)
 		}
 		c.Set("Content-Type", "text/event-stream")
@@ -151,7 +158,7 @@ func listen() *fiber.App {
 		return nil
 	})
 	v1.Post("/files", batchUpload)
-	v1.Get("/files/:id/content", nop) // TODO: batchRecv
+	v1.Get("/files/:id/content", batchRecv)
 	v1.Get("/batches", nop)
 	v1.Post("/batches", batchSend)
 	v1.Post("/batches/:id/cancel", batchCancel)

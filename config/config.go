@@ -137,11 +137,11 @@ type Provider struct {
 	Models     []Model  `hcl:"model,block"`
 	AllowedIPs []string `hcl:"allowed_ips,optional"`
 	BatchAPI   bool     `hcl:"batch_api,optional"`
-	Dataset    string   `hcl:"dataset,optional"`
 
-	// Vertex
+	// Vertex AI
 	Project string `hcl:"project,optional"`
 	Region  string `hcl:"region,optional"`
+	Dataset string `hcl:"dataset,optional"`
 }
 
 // Model is a set of overrides passed to driver so that it can better
