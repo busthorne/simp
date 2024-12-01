@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"embed"
 	_ "embed"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,13 +22,13 @@ var DB *sql.DB
 //go:embed schema/*.sql
 var migrations embed.FS
 
-func Open(sqlite string) {
+func Open(sqlite string) error {
 	if DB == nil {
 		sqlite_vec.Auto()
 	}
 	db, err := sql.Open("sqlite3", sqlite)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	epoch, _ := New(db).Epoch(context.Background())
 	if epoch < Epoch {
@@ -35,7 +36,7 @@ func Open(sqlite string) {
 		sort.Slice(dir, func(i, j int) bool {
 			return dir[i].Name() < dir[j].Name()
 		})
-		for _, f := range dir {
+		for i, f := range dir[epoch:] {
 			parts := strings.Split(f.Name(), "_")
 			if len(parts) < 2 {
 				continue
@@ -47,13 +48,23 @@ func Open(sqlite string) {
 			sql, _ := migrations.ReadFile("schema/" + f.Name())
 			_, err := db.Exec(string(sql))
 			if err != nil {
-				panic(err)
+				return fmt.Errorf("%s migration failed: %w", f.Name(), err)
 			}
-			db.Exec("update migration set epoch = ?", e)
+
+			// first setup
+			if epoch == 0 && i == 0 {
+				if _, err := db.Exec("insert into migration (epoch) values (1)"); err != nil {
+					return fmt.Errorf("failed to insert migration: %w", err)
+				}
+			} else {
+				if _, err := db.Exec("update migration set epoch = ?", e); err != nil {
+					return fmt.Errorf("epoch error: %w", err)
+				}
+			}
 		}
 	}
-
 	DB = db
+	return nil
 }
 
 func Session() *Queries {

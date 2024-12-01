@@ -35,6 +35,17 @@ func findWaldo(alias string) (simp.Driver, config.Model, error) {
 	return nil, m, simp.ErrNotFound
 }
 
+func findBaldo(alias string) (simp.BatchDriver, config.Model, error) {
+	d, m, err := findWaldo(alias)
+	if err != nil {
+		return nil, m, err
+	}
+	if bd, ok := d.(simp.BatchDriver); ok {
+		return bd, m, nil
+	}
+	return nil, m, simp.ErrNotFound
+}
+
 func drive(p config.Provider) (d simp.Driver, err error) {
 	if p.APIKey == "" {
 		ring, err := keyringFor(p, cfg)

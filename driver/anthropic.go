@@ -288,9 +288,12 @@ func (a *Anthropic) BatchCancel(ctx context.Context, b *openai.Batch) error {
 		ctx,
 		b.Metadata["job"].(string),
 		anthropic.BetaMessageBatchCancelParams{})
+	if err != nil {
+		return fmt.Errorf("failed to cancel batch: %w", err)
+	}
 	b.Metadata["state"] = batch.ProcessingStatus
 	b.Status = a.batchStatus(batch.ProcessingStatus)
-	return err
+	return nil
 }
 
 func (a *Anthropic) batchStatus(s anthropic.BetaMessageBatchProcessingStatus) openai.BatchStatus {

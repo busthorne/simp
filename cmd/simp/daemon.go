@@ -28,10 +28,16 @@ func listen() *fiber.App {
 		if err = c.Next(); err == nil {
 			return
 		}
-		if c.Response().StatusCode() == fiber.StatusOK {
+		log.Errorf("%s %s %v\n", c.Method(), c.Path(), err)
+		if errors.Is(err, simp.ErrBookkeeping) {
+			c.Status(fiber.StatusInternalServerError)
+			return c.JSON(fiber.Map{"error": fiber.Map{
+				"message": "bookkeeping error",
+				"type":    "error",
+			}})
+		} else if c.Response().StatusCode() == fiber.StatusOK {
 			c.Status(fiber.StatusBadRequest)
 		}
-		log.Errorf("%s %s %v\n", c.Method(), c.Path(), err)
 		var errType = "invalid_request_error"
 		if un := errors.Unwrap(err); un != nil {
 			err = un
@@ -157,12 +163,12 @@ func listen() *fiber.App {
 		})
 		return nil
 	})
-	v1.Post("/files", batchUpload)
-	v1.Get("/files/:id/content", batchRecv)
+	v1.Post("/files", BatchUpload)
+	v1.Get("/files/:id/content", BatchReceive)
 	v1.Get("/batches", nop)
-	v1.Post("/batches", batchSend)
-	v1.Post("/batches/:id/cancel", batchCancel)
-	v1.Get("/batches/:id", batchRefresh)
+	v1.Post("/batches", BatchSend)
+	v1.Post("/batches/:id/cancel", BatchCancel)
+	v1.Get("/batches/:id", BatchRefresh)
 
 	addr := strings.Split(cfg.Daemon.ListenAddr, "://")
 	switch addr[0] {

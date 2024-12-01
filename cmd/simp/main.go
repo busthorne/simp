@@ -16,6 +16,7 @@ import (
 	"github.com/busthorne/keyring"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/auth"
+	"github.com/busthorne/simp/books"
 	"github.com/busthorne/simp/config"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gofiber/fiber/v2/log"
@@ -78,6 +79,12 @@ func main() {
 		defer w.Close()
 		w.Add(path.Join(simp.Path, "config"))
 
+		// open the database
+		if err := books.Open(path.Join(simp.Path, "books.db3")); err != nil {
+			stderr("failed to open books:", err)
+			exit(1)
+		}
+
 		reload := make(stimulus)
 		go func() {
 			for e := range w.Events {
@@ -94,6 +101,7 @@ func main() {
 				select {
 				case <-reload:
 					log.Info("config changed, reloading")
+					cfg.ClearCache()
 				case <-sig:
 					return
 				}

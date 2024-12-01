@@ -5,35 +5,35 @@
 package books
 
 import (
-	"encoding/json"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 )
 
 type Batch struct {
-	ID          string
-	Super       *string
-	Status      openai.BatchStatus
-	Model       string
-	Body        openai.Batch
-	CreatedAt   time.Time
-	UpdatedAt   *time.Time
-	CompletedAt *time.Time
-	CanceledAt  *time.Time
+	ID          string       `db:"id" json:"id"`
+	Super       *string      `db:"super" json:"super"`
+	Model       string       `db:"model" json:"model"`
+	Body        openai.Batch `db:"body" json:"body"`
+	CreatedAt   time.Time    `db:"created_at" json:"created_at"`
+	UpdatedAt   *time.Time   `db:"updated_at" json:"updated_at"`
+	CompletedAt *time.Time   `db:"completed_at" json:"completed_at"`
+	CanceledAt  *time.Time   `db:"canceled_at" json:"canceled_at"`
 }
 
-type BatchDirect struct {
-	Batch       string
-	CustomID    string
-	Op          openai.BatchEndpoint
-	Request     json.RawMessage
-	Response    json.RawMessage
-	CreatedAt   time.Time
-	CompletedAt *time.Time
-	CanceledAt  *time.Time
+type BatchOp struct {
+	Batch       string             `db:"batch" json:"batch"`
+	CustomID    string             `db:"custom_id" json:"custom_id"`
+	Request     openai.BatchInput  `db:"request" json:"request"`
+	Response    openai.BatchOutput `db:"response" json:"response"`
+	Implicit    bool               `db:"implicit" json:"implicit"`
+	Deferred    bool               `db:"deferred" json:"deferred"`
+	CreatedAt   time.Time          `db:"created_at" json:"created_at"`
+	UpdatedAt   *time.Time         `db:"updated_at" json:"updated_at"`
+	CompletedAt *time.Time         `db:"completed_at" json:"completed_at"`
+	CanceledAt  *time.Time         `db:"canceled_at" json:"canceled_at"`
 }
 
 type Migration struct {
-	Epoch int64
+	Epoch int64 `db:"epoch" json:"epoch"`
 }

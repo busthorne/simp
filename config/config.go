@@ -20,7 +20,22 @@ type Config struct {
 	Diagnostics map[string]hcl.Diagnostics
 }
 
+type lookupOk struct {
+	Model    Model
+	Provider Provider
+}
+
+var lookupCache = make(map[string]lookupOk)
+
+func (c *Config) ClearCache() {
+	lookupCache = make(map[string]lookupOk)
+}
+
 func (c *Config) LookupModel(alias string) (m Model, p Provider, ok bool) {
+	if v, ok := lookupCache[alias]; ok {
+		return v.Model, v.Provider, true
+	}
+
 	if suffix := "latest"; strings.HasSuffix(alias, suffix) {
 		alias = strings.TrimSuffix(alias, suffix)
 	}
@@ -31,6 +46,7 @@ func (c *Config) LookupModel(alias string) (m Model, p Provider, ok bool) {
 				if m.Latest {
 					m.Name = m.Name + "-latest"
 				}
+				lookupCache[alias] = lookupOk{Model: m, Provider: p}
 				return m, p, true
 			}
 		}

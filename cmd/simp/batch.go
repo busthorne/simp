@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/books"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/log"
 	"github.com/google/uuid"
 	"github.com/sashabaranov/go-openai"
 )
@@ -19,7 +21,11 @@ var (
 	errMeatNorFish = fmt.Errorf("neither a chat completion nor an embedding")
 )
 
-func batchUpload(c *fiber.Ctx) error {
+func notkeep(err error, format string, args ...any) error {
+	return fmt.Errorf("%w: %s: %v", simp.ErrBookkeeping, fmt.Sprintf(format, args...), err)
+}
+
+func BatchUpload(c *fiber.Ctx) error {
 	ctx := c.Context()
 
 	switch purpose := c.FormValue("purpose"); purpose {
@@ -48,67 +54,54 @@ func batchUpload(c *fiber.Ctx) error {
 		ids = map[string]bool{}
 	)
 	for i := 1; ; i++ {
-		var req openai.BatchInput
+		var input openai.BatchInput
 
 		// a bit of a courtesy handler
 		malformed := func(err error) error {
-			return fmt.Errorf("request %s/%d is malformed: %w", req.CustomID, i, err)
+			return fmt.Errorf("request/%d (%s) is malformed: %w", i, input.CustomID, err)
 		}
 
 		// preliminary validation
-		switch err := lines.Decode(&req); err {
+		switch err := lines.Decode(&input); err {
 		case nil:
-			if req.CustomID == "" {
+			if input.CustomID == "" {
 				return malformed(errNoid)
 			}
-			if _, ok := ids[req.CustomID]; ok {
-				return malformed(fmt.Errorf("duplicate custom_id %q", req.CustomID))
+			if _, ok := ids[input.CustomID]; ok {
+				return malformed(fmt.Errorf("duplicate custom_id %q", input.CustomID))
 			}
-			switch req.Method {
-			case "":
-			case "POST":
-			case "post":
+			switch input.Method {
+			case "", "POST", "post":
+				input.Method = "POST"
 			default:
 				return malformed(errBadMethod)
 			}
-
-			ids[req.CustomID] = true
+			ids[input.CustomID] = true
 		case io.EOF:
 			goto eof
 		default:
 			return malformed(err)
 		}
 
-		// mags consist of batch-unions of chat/embedding input/output
-		i := openai.BatchInput{CustomID: req.CustomID}
-
-		model := ""
-		switch openai.BatchEndpoint(req.URL) {
-		case openai.BatchEndpointChatCompletions:
-			model = i.ChatCompletion.Model
-		case openai.BatchEndpointEmbeddings:
-			model = i.Embedding.Model
-		default:
-			return malformed(errMeatNorFish)
-		}
-
-		// TODO: add alias cache in findWaldo
+		model := input.Model()
 		d, m, err := findWaldo(model)
 		if err != nil {
 			return malformed(fmt.Errorf("model %q: %w", model, err))
 		}
+		model = m.Name
+		// cache the batch driver variant
 		if _, ok := drivers[model]; !ok {
 			bd, _ := d.(simp.BatchDriver)
 			drivers[model] = bd
 		}
 		// contextual validation
 		switch {
-		case i.ChatCompletion != nil:
+		case input.ChatCompletion != nil:
 			if m.Embedding {
 				return malformed(fmt.Errorf("model %q is not a chat model", model))
 			}
 			alt := ""
-			for i, m := range i.ChatCompletion.Messages {
+			for i, m := range input.ChatCompletion.Messages {
 				switch m.Role {
 				case "system":
 					if i != 0 {
@@ -123,93 +116,116 @@ func batchUpload(c *fiber.Ctx) error {
 				}
 				alt = m.Role
 			}
-			i.ChatCompletion.Model = m.Name
-		case i.Embedding != nil:
+			input.ChatCompletion.Model = model
+		case input.Embedding != nil:
 			if !m.Embedding {
 				return malformed(fmt.Errorf("model %q is not an embedding model", model))
 			}
-			i.Embedding.Model = m.Name
+			input.Embedding.Model = model
 		default:
-			panic("unsupported batch op")
+			return malformed(errMeatNorFish)
 		}
-		inputs[model] = append(inputs[model], i)
+		inputs[model] = append(inputs[model], input)
 	}
 
-	// the aggregate batch has been partitioned
+	// the super batch has been partitioned into sub-batches
 eof:
+	if len(inputs) == 0 {
+		return fmt.Errorf("no requests to batch")
+	}
+	id := uuid.New().String()
+	super := openai.Batch{
+		ID:               id,
+		Object:           "batch",
+		CompletionWindow: "24h",
+		CreatedAt:        time.Now().Unix(),
+		RequestCounts:    openai.BatchRequestCounts{},
+		Metadata:         map[string]any{},
+		OutputFileID:     id,
+	}
+
+	log.Debugf("batch %q partitions:\n", super.ID)
+	for model, inputs := range inputs {
+		log.Debugf("%d %s (%T)\n", len(inputs), model, drivers[model])
+		super.RequestCounts.Total += len(inputs)
+	}
+
 	tx, err := books.DB.BeginTx(c.Context(), nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return notkeep(err, "begin")
 	}
 	defer tx.Rollback()
 
 	book := books.Session().WithTx(tx)
-	super := uuid.New().String()
-	err = book.CreateBatch(ctx, books.CreateBatchParams{
-		ID: super,
+	err = book.InsertBatch(ctx, books.InsertBatchParams{
+		ID:   super.ID,
+		Body: super,
 	})
 	if err != nil {
-		return fmt.Errorf("create super batch: %w", err)
+		return notkeep(err, "insert super batch")
 	}
+	for model, inputs := range inputs {
+		var (
+			implicit, deferred bool
 
-	for model, input := range inputs {
-		bd, ok := drivers[model]
+			parent = super
+			bd, ok = drivers[model]
+		)
 		if ok {
 			b := openai.Batch{
 				ID:       uuid.New().String(),
-				Endpoint: input[0].URL,
+				Endpoint: inputs[0].URL,
+				RequestCounts: openai.BatchRequestCounts{
+					Total: len(inputs),
+				},
+				Metadata: map[string]any{},
 			}
-			switch err := bd.BatchUpload(ctx, &b, input); err {
-			// i.e. openai-compatible providers
+			switch err := bd.BatchUpload(ctx, &b, inputs); err {
 			case simp.ErrNotImplemented:
+				// i.e. openai-compatible providers that do not support batching
+				implicit = true
+			case simp.ErrBatchDeferred:
+				// i.e. anthropic which doesn't require an upload
+				b.Metadata["deferred"] = true
+				deferred = true
+				parent = b
+				fallthrough
 			case nil:
-				// if batching is supported, upload each model's magazine
-				err := book.CreateBatch(ctx, books.CreateBatchParams{
-					ID:     b.ID,
-					Super:  &super,
-					Status: b.Status,
-					Model:  model,
-					Body:   b,
+				err := book.InsertBatch(ctx, books.InsertBatchParams{
+					ID:    b.ID,
+					Super: &super.ID,
+					Model: model,
+					Body:  b,
 				})
 				if err != nil {
-					return fmt.Errorf("insert batch: %w", err)
+					return notkeep(err, "create batch")
 				}
-				continue
 			default:
 				return fmt.Errorf("batch upload failed for model %q: %w", model, err)
 			}
 		}
-
-		// if batching is not supported, create a batch op for each request
-		for _, u := range input {
-			var body json.RawMessage
-			var op openai.BatchEndpoint
-			switch {
-			case u.ChatCompletion != nil:
-				op = openai.BatchEndpointChatCompletions
-				body, _ = json.Marshal(u.ChatCompletion)
-			case u.Embedding != nil:
-				op = openai.BatchEndpointEmbeddings
-				body, _ = json.Marshal(u.Embedding)
-			default:
-				panic("unsupported batch op")
-			}
-			err := book.CreateBatchDirect(ctx, books.CreateBatchDirectParams{
-				Batch:    super,
-				CustomID: u.CustomID,
-				Op:       op,
-				Request:  body,
+		if !(deferred || implicit) {
+			continue
+		}
+		// create implicit and deferred batch ops
+		for i, input := range inputs {
+			err := book.InsertBatchOp(ctx, books.InsertBatchOpParams{
+				Batch:    parent.ID,
+				CustomID: input.CustomID,
+				Request:  input,
+				Implicit: implicit,
+				Deferred: deferred,
 			})
 			if err != nil {
-				return simp.ErrBookkeeping
+				return notkeep(err, "create batch op/%d", i)
 			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return simp.ErrBookkeeping
+		return notkeep(err, "commit")
 	}
 	return c.JSON(openai.File{
-		ID:       super,
+		ID:       super.ID,
 		Object:   "file",
 		Bytes:    int(ff.Size),
 		FileName: ff.Filename,
@@ -217,7 +233,7 @@ eof:
 	})
 }
 
-func batchSend(c *fiber.Ctx) error {
+func BatchSend(c *fiber.Ctx) error {
 	var req openai.CreateBatchRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
@@ -232,86 +248,73 @@ func batchSend(c *fiber.Ctx) error {
 	if err != nil {
 		return fmt.Errorf("batch not found: %w", err)
 	}
-
 	super := row.Body
 	if super.Status != "" {
 		return fmt.Errorf("batch %q is already %s", super.ID, super.Status)
 	}
-	// fetch all sub-batches (this does not include direct batch ops)
+	// fetch all sub-batches (this does not include implicit ops)
 	subs, err := book.SubBatches(ctx, &super.ID)
 	if err != nil {
 		return fmt.Errorf("empty batch content, will not create")
 	}
 
 	// submit a sub-batch, and do the bookkeeping on it
-	for i, sub := range subs {
-		batch := &subs[i].Body
+	for _, sub := range subs {
+		batch := sub.Body
 
-		d, _, err := findWaldo(sub.Model)
+		bd, _, err := findBaldo(sub.Model)
 		if err != nil {
-			return fmt.Errorf("model %q: %w", sub.Model, err)
-		}
-		bd, ok := d.(simp.BatchDriver)
-		if !ok {
-			return fmt.Errorf("model %q is not batchable", sub.Model)
+			return fmt.Errorf("model %q is not available for batching", sub.Model)
 		}
 
-		upd := books.UpdateBatchParams{ID: batch.ID}
+		// pre-deferred
+		if _, ok := batch.Metadata["deferred"]; ok {
+			inputs, err := book.BatchOps(ctx, batch.ID)
+			if err != nil {
+				return notkeep(err, "fetch deferred ops")
+			}
+			batch.Metadata["inputs"] = inputs
+		}
 
-		if err := bd.BatchSend(ctx, batch); err != nil {
-			batch.Status = openai.BatchStatusCancelled
-			batch.CancelledAt = now.Unix()
-			upd.CanceledAt = &now
-
+		// send
+		if err := bd.BatchSend(ctx, &batch); err != nil {
 			berr := openai.BatchError{Message: err.Error()}
 			if super.Errors == nil {
 				super.Errors = &openai.BatchErrors{}
 			}
 			super.Errors.Data = append(super.Errors.Data, berr)
+			batch.Status = openai.BatchStatusCancelled
+			batch.CancelledAt = now.Unix()
 		} else {
 			batch.Status = openai.BatchStatusInProgress
 			batch.InProgressAt = now.Unix()
 		}
-		upd.Status = batch.Status
-		upd.Body = *batch
-		book.UpdateBatch(ctx, upd)
+		// post-deferred
+		if _, ok := batch.Metadata["deferred"]; ok {
+			delete(batch.Metadata, "inputs")
+			if err := book.DeleteBatchOps(ctx, batch.ID); err != nil {
+				return notkeep(err, "delete deferred ops")
+			}
+		}
+		if err := book.UpdateBatch(ctx, books.BatchUpdates(batch)); err != nil {
+			return notkeep(err, "update sub-batch")
+		}
 	}
 
 	if super.Errors != nil && len(super.Errors.Data) == len(subs) {
 		super.Status = openai.BatchStatusFailed
+		super.CancelledAt = now.Unix()
 	} else {
 		super.Status = openai.BatchStatusInProgress
+		super.InProgressAt = now.Unix()
 	}
-
-	err = book.UpdateBatch(ctx, books.UpdateBatchParams{
-		ID:     super.ID,
-		Status: super.Status,
-		Body:   super,
-	})
-	if err != nil {
-		return simp.ErrBookkeeping
+	if err := book.UpdateBatch(ctx, books.BatchUpdates(super)); err != nil {
+		return notkeep(err, "update super batch")
 	}
 	return c.JSON(super)
 }
 
-func batchCancel(c *fiber.Ctx) error {
-	ctx := c.Context()
-	book := books.Session()
-	id := c.Params("id")
-	row, err := book.BatchById(ctx, id)
-	if err != nil {
-		return fmt.Errorf("batch not found or already cancelled: %w", err)
-	}
-	if err := book.CancelBatch(ctx, id); err != nil {
-		return simp.ErrBookkeeping
-	}
-	batch := row.Body
-	batch.Status = openai.BatchStatusCancelled
-	batch.CancelledAt = time.Now().Unix()
-	return c.JSON(batch)
-}
-
-func batchRefresh(c *fiber.Ctx) error {
+func BatchRefresh(c *fiber.Ctx) error {
 	ctx := c.Context()
 	book := books.Session()
 	id := c.Params("id")
@@ -319,58 +322,137 @@ func batchRefresh(c *fiber.Ctx) error {
 	if err != nil {
 		return fmt.Errorf("batch not found: %w", err)
 	}
-	batch := row.Body
-	if batch.Status != openai.BatchStatusInProgress {
-		return c.JSON(batch)
+	super := row.Body
+	switch super.Status {
+	case openai.BatchStatusCompleted, openai.BatchStatusFailed, openai.BatchStatusCancelled:
+		return c.JSON(super)
 	}
 
-	// TODO: check sub-batches and direct ops
-	return simp.ErrNotImplemented
+	subs, err := book.SubBatchesPending(ctx, &super.ID)
+	if err != nil {
+		return notkeep(err, "fetch pending sub-batches")
+	}
+	elapsed := 0
+	for i, sub := range subs {
+		batch := &subs[i].Body
+
+		bd, _, err := findBaldo(sub.Model)
+		if err != nil {
+			return notkeep(err, "model %q is not available for batching", sub.Model)
+		}
+		if err := bd.BatchRefresh(ctx, batch); err != nil {
+			return fmt.Errorf("refresh %s sub-batch failed: %w", sub.Model, err)
+		}
+		switch now := time.Now().Unix(); batch.Status {
+		case openai.BatchStatusFailed:
+			batch.FailedAt = now
+		case openai.BatchStatusCancelled:
+			batch.CancelledAt = now
+		case openai.BatchStatusCompleted:
+			batch.CompletedAt = now
+		}
+		if err := book.UpdateBatch(ctx, books.BatchUpdates(*batch)); err != nil {
+			return notkeep(err, "update sub-batch")
+		}
+		if batch.Status != openai.BatchStatusInProgress {
+			elapsed++
+		}
+	}
+	if elapsed == len(subs) {
+		ops, err := book.CountBatchOps(ctx, super.ID)
+		switch err {
+		case nil:
+		case sql.ErrNoRows:
+		default:
+			return notkeep(err, "count batch ops")
+		}
+		if ops.Total == ops.Completed+ops.Canceled {
+			super.Status = openai.BatchStatusCompleted
+			super.CompletedAt = time.Now().Unix()
+		}
+	}
+	if err := book.UpdateBatch(ctx, books.BatchUpdates(super)); err != nil {
+		return notkeep(err, "update super batch")
+	}
+	return c.JSON(super)
 }
 
-func batchRecv(c *fiber.Ctx) error {
+func BatchReceive(c *fiber.Ctx) error {
 	ctx := c.Context()
 	book := books.Session()
 	sid := c.Params("id")
-	rows, err := book.SubBatchesCompleted(ctx, &sid)
+	subs, err := book.SubBatchesCompleted(ctx, &sid)
 	if err != nil {
 		return fmt.Errorf("batch not found: %w", err)
 	}
 	c.Set("Content-Type", "application/jsonl")
 	w := json.NewEncoder(c.Response().BodyWriter())
-	for _, row := range rows {
-		batch := row.Body
-		d, _, err := findWaldo(row.Model)
+	for _, sub := range subs {
+		batch := sub.Body
+		bd, _, err := findBaldo(sub.Model)
 		if err != nil {
 			continue
 		}
-		bd, ok := d.(simp.BatchDriver)
-		if !ok {
-			continue
-		}
-		mag, err := bd.BatchReceive(ctx, &batch)
+		outputs, err := bd.BatchReceive(ctx, &batch)
 		if err != nil {
 			continue
 		}
-		for _, u := range mag {
-			switch {
-			case u.ChatCompletion != nil:
-				w.Encode(u.ChatCompletion)
-			case u.Embedding != nil:
-				w.Encode(u.Embedding)
-			default:
-				continue
-			}
+		log.Debugf("batch %q received %d outputs\n", batch.ID, len(outputs))
+		for _, output := range outputs {
+			w.Encode(output)
 		}
 	}
-	{
-		rows, err := book.BatchDirectCompleted(ctx, sid)
-		if err != nil {
-			return fmt.Errorf("batch not found: %w", err)
-		}
-		for _, row := range rows {
-			w.Encode(row.Response)
-		}
+	outputs, err := book.BatchOpsCompleted(ctx, sid)
+	if err != nil {
+		return fmt.Errorf("batch not found: %w", err)
+	}
+	for _, output := range outputs {
+		w.Encode(output)
 	}
 	return nil
+}
+
+func BatchCancel(c *fiber.Ctx) error {
+	ctx := c.Context()
+	book := books.Session()
+	id := c.Params("id")
+	super, err := book.BatchById(ctx, id)
+	if err != nil {
+		return fmt.Errorf("batch not found or already cancelled: %w", err)
+	}
+	if super.CompletedAt != nil || super.CanceledAt != nil {
+		return fmt.Errorf("batch %q is already %s", super.ID, super.Body.Status)
+	}
+	subs, err := book.SubBatchesPending(ctx, &super.ID)
+	switch err {
+	case nil:
+	case sql.ErrNoRows:
+	default:
+		return notkeep(err, "fetch pending sub-batches")
+	}
+	for _, sub := range subs {
+		bd, _, err := findBaldo(sub.Model)
+		if err != nil {
+			return fmt.Errorf("model %q is not available for batching", sub.Model)
+		}
+		batch := sub.Body
+		if err := bd.BatchCancel(ctx, &batch); err != nil {
+			return fmt.Errorf("cancel on %q failed: %w", sub.Model, err)
+		}
+		batch.Status = openai.BatchStatusCancelled
+		batch.CancelledAt = time.Now().Unix()
+		if err := book.UpdateBatch(ctx, books.BatchUpdates(batch)); err != nil {
+			return notkeep(err, "update sub-batch")
+		}
+	}
+	if err := book.CancelBatchOps(ctx, id); err != nil {
+		return notkeep(err, "cancel batch ops")
+	}
+	batch := super.Body
+	batch.Status = openai.BatchStatusCancelled
+	batch.CancelledAt = time.Now().Unix()
+	if err := book.UpdateBatch(ctx, books.BatchUpdates(batch)); err != nil {
+		return notkeep(err, "update superbatch")
+	}
+	return c.JSON(batch)
 }
