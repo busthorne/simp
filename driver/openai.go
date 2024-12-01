@@ -48,7 +48,7 @@ func (o *OpenAI) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 }
 
 func (o *OpenAI) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []openai.BatchInput) error {
-	if o.BaseURL != "" && !o.BatchAPI {
+	if o.BaseURL != "" && !o.Batch {
 		return simp.ErrNotImplemented
 	}
 	f, err := o.CreateFileBatch(ctx, inputs)

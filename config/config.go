@@ -36,7 +36,7 @@ func (c *Config) LookupModel(alias string) (m Model, p Provider, ok bool) {
 		return v.Model, v.Provider, true
 	}
 
-	if suffix := "latest"; strings.HasSuffix(alias, suffix) {
+	if suffix := "-latest"; strings.HasSuffix(alias, suffix) {
 		alias = strings.TrimSuffix(alias, suffix)
 	}
 	for _, p := range c.Providers {
@@ -152,7 +152,7 @@ type Provider struct {
 	Keyring    string   `hcl:"keyring,optional"`
 	Models     []Model  `hcl:"model,block"`
 	AllowedIPs []string `hcl:"allowed_ips,optional"`
-	BatchAPI   bool     `hcl:"batch_api,optional"`
+	Batch      bool     `hcl:"batch,optional"`
 
 	// Vertex AI
 	Project string `hcl:"project,optional"`

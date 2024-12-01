@@ -112,6 +112,9 @@ func (p *Provider) Validate() error {
 		if p.Region == "" {
 			collect(ø("region is required for vertex driver"))
 		}
+		if p.Batch && p.Dataset == "" {
+			collect(ø("biquery dataset is required for vertex batching"))
+		}
 	}
 	for _, m := range p.Models {
 		collect(m.Validate(), ƒ(`model "%s" "%s"`, p.Name, m.Name))

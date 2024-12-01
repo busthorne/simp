@@ -31,7 +31,11 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 - [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format
 - [x] [Daemon mode](#daemon)
 	- [x] OpenAI-compatible API gateway
-	- [ ] Universal [Batch API](#batch-api)
+	- [x] [Universal Batch API](#batch-api)
+		- [x] [Vertex](#vertex)
+		- [x] OpenAI
+		- [x] Anthropic
+		- [ ] Everybody else
 	- [ ] SSO
 - [x] Interactive mode
 - [x] [Vim mode][1]
@@ -124,13 +128,18 @@ auth "keyring" "default" {
 	keychain_icloud = true
 }
 
-provider "openai" "api" {
-	model "gpt-4o" {
-		alias = ["4o"]
+provider "vertex" "api" {
+	region = "europe-north1"
+	project = "simp"
+	# Batch Prediction API uses a BigQuery dataset which must be created beforehand.
+	dataset = "simpbatches"
+	batch = true
+
+	model "gemini-1.5-flash-002" {
+		alias = ["flash"]
 	}
-	model "o1-preview" {
-		alias = ["o1"]
-		temperature = 1.0
+	model "gemini-1.5-pro-002" {
+		alias = ["pro"]
 	}
 }
 
@@ -178,9 +187,14 @@ OpenAI has introduced [Batch API][2]—a means to perform many completions and e
 
 Normally, a provider would require any given batch to be completions-only, or embeddings-only, or one model at a time (Google is like that!)
 
-Since `simp -daemon` has to translate batch formats regardless, it allows batches with arbitrary content, and arbitrary providers. You may address OpenAI, Anthropic, _and_ Google models all in the same batch, but also even the providers that _do not_ support batching. In that case, the dameon would treat your batch as "virtual", partition it into per-model chunks, and gather them on completion. If the model provider referenced in the batch does not support batching natively, the relevant tasks will trickle down at quota speed using normal endpoints.
+Since `simp -daemon` has to translate batch formats regardless, it allows batches with arbitrary content, and arbitrary providers. You may address OpenAI, Anthropic, _and_ Google models all in the same batch, but also even the providers that _do not_ support batching. In that case, the dameon would treat your batch as "virtual", partition it into per-model chunks, and gather them on completion. If the model provider referenced in the batch does not support batching natively, the relevant tasks will trickle down at quota speed using normal endpoints. To consumer this behaviour is transparent; you get to create one OpenAI-style batch using whatever configured models (aliases) or providers, & the daemon would take care of the rest.
 
-To consumer this behaviour is transparent; you get to create one OpenAI-style batch using whatever configured models (aliases) or providers, & the daemon would take care of the rest. If you work with text datasets as much as I do, my money is you would find this behaviour as _liberating_ at least as much as I do.
+If you work with text datasets as much as I do, my money is you would find this behaviour as _liberating_ at least as much as I do.
+
+#### Vertex
+Note that Vertex AI's [Batch API][15] requires a BigQuery dataset for communicating back the results. Well, there's the bucket option, however it's really messy to match `custom_id` from the responses, as they're out-of-order, and that would make it really complicated to handle. Therefore, by default Batch API is disabled for Vertex providers, see [Configuration](#configuration) for example configuration that covers all bases.
+
+#### Use case
 
 I will soon be show-casing the [pg_bluerose][11] extension that brings LLM primitives to Postgres, including batching:
 
@@ -305,3 +319,4 @@ MIT
 [12]: https://github.com/microsoft/aici
 [13]: https://en.wikipedia.org/wiki/Directed_acyclic_graph
 [14]: https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
+[15]: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/batch-prediction-gemini

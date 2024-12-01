@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -14,11 +13,13 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+const anthropicBeta = "message-batches-2024-09-24"
+
 // NewAnthropic creates a new Anthropic client.
 func NewAnthropic(p config.Provider) (*Anthropic, error) {
 	cli := anthropic.NewClient(
 		option.WithAPIKey(p.APIKey),
-		option.WithHeader("anthropic-beta", "message-batches-2024-09-24"),
+		option.WithHeader("anthropic-beta", anthropicBeta),
 	)
 	return &Anthropic{Client: *cli, p: p}, nil
 }
@@ -233,20 +234,14 @@ func (a *Anthropic) BatchRefresh(ctx context.Context, b *openai.Batch) error {
 }
 
 func (a *Anthropic) BatchReceive(ctx context.Context, b *openai.Batch) (outputs []openai.BatchOutput, ret error) {
-	results, ok := b.Metadata["results"].(string)
-	if !ok {
-		return nil, fmt.Errorf("no results yet (refresh?)")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, results, nil)
+	resp, err := a.Beta.Messages.Batches.Results(
+		ctx,
+		b.Metadata["job"].(string),
+		anthropic.BetaMessageBatchResultsParams{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get results: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read results: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
 	r := json.NewDecoder(resp.Body)
 
 	var indy anthropic.BetaMessageBatchIndividualResponse
@@ -264,7 +259,7 @@ func (a *Anthropic) BatchReceive(ctx context.Context, b *openai.Batch) (outputs 
 					Message: err.Message,
 				}
 			default:
-				output.ChatCompletion = &openai.ChatCompletionResponse{
+				cc := &openai.ChatCompletionResponse{
 					Choices: []openai.ChatCompletionChoice{{
 						Index: 0,
 						Message: openai.ChatCompletionMessage{
@@ -273,6 +268,12 @@ func (a *Anthropic) BatchReceive(ctx context.Context, b *openai.Batch) (outputs 
 						},
 					}},
 				}
+				cc.Usage = openai.Usage{
+					PromptTokens:     int(msg.Usage.InputTokens),
+					CompletionTokens: int(msg.Usage.OutputTokens),
+					TotalTokens:      int(msg.Usage.InputTokens + msg.Usage.OutputTokens),
+				}
+				output.ChatCompletion = cc
 			}
 			outputs = append(outputs, output)
 		case io.EOF:

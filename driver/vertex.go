@@ -204,6 +204,10 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 }
 
 func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []openai.BatchInput) error {
+	if !v.Batch {
+		return simp.ErrNotImplemented
+	}
+
 	client, err := v.bigqueryClient(ctx)
 	if err != nil {
 		return err
@@ -402,6 +406,11 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 				},
 			}
 			output.Choices = append(output.Choices, c)
+		}
+		output.Usage = openai.Usage{
+			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
+			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
 		}
 		outputs = append(outputs, openai.BatchOutput{
 			CustomID:       row.ID,
