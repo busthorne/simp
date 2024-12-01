@@ -76,7 +76,6 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.18 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
-	github.com/spewerspew/spew v0.0.0-20230513223542-89b69fbbe2bd // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

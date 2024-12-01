@@ -3,11 +3,13 @@
 echo 'Tell a joke.' | simp
 ```
 
-Simp is a simple point of consumption and an ergonomic CLI tool for many OpenAI-compatible, but also _the incompatible_ inference backends; it's somehow similar to [llm][0] by Simon Willison but definitely _not_ inspired by it. (Funny: I did the first version of this program the day before Simon did his.)
+Simp is a simple point of consumption and an ergonomic CLI tool for many OpenAI-compatible, but also _the incompatible_ inference backends; it's somehow similar to [llm][0] by Simon Willison but definitely _not_ inspired by it. (Funny: I did the first version of this program the day before Simon did his.) Consider [vim-simp][1] to bring hot agents to your scratch buffers.
 
-Consider [vim-simp][1] to bring hot agents to your scratch buffers. If you're anything like me, you will love it!
+If you're anything like me, you will love it!
 
-There's also `simp -daemon` which is, like, a whole API gateway thing; it only supports Anthropic and OpenAI drivers for now (which supports a surprising number of backends, including most self-hosted ones.) It uses the configured keychain by default, however in the future I'll be adding compartmentation, and SSO (via Cloudflare, JWT, OIDC, you name it.) But perhaps most notably, as soon as I'm able to figure out the most elegant way to handle state ([sqlite-vec][6]?) it will follow OpenAI's [Batch API][2] in provider-agnostic manner, & default to normal endpoints if some provider won't support it.
+There's also `simp -daemon` which is, like, a whole API gateway thing; it supports OpenAI, Anthropic, Gemini, Vertex, and Dify drivers for now. OpenAI driver itself covers a surprising number of backends, including most self-hosted ones. [Jina][16] comes to mind; note that `task` and `late_chunking` parameters are supported natively due to `simp` using [a fork][17] of [go-openai][18].
+
+Simp uses the configured keychain by default, however in the future I'll be adding compartmentation, and SSO via Cloudflare, JWT, OIDC, you name it; it also follows OpenAI's [Batch API][2] in provider-agnostic manner, & default to normal endpoints if some provider won't support it.
 
 The tool is designed ergonomically so that you could bring it to shell scripts.
 
@@ -20,7 +22,8 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 ```
 
 ## Features
-- [x] Prompt from stdin, complete to stdout
+- [x] Read from stdin, complete to stdout
+- [x] Setup wizard `-configure`
 - [x] Drivers
 	- [x] OpenAI
 	- [x] Anthropic
@@ -35,11 +38,10 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 		- [x] [Vertex](#vertex)
 		- [x] OpenAI
 		- [x] Anthropic
-		- [ ] Everybody else
+		- [ ] The others
 	- [ ] SSO
 - [x] Interactive mode
 - [x] [Vim mode][1]
-- [x] Setup wizard `-configure`
 - [x] [History](#history)
 	- [x] Group by path parts
 	- [x] Ignore
@@ -90,12 +92,12 @@ I'd written a hanful of OpenAI-compatible API proxies over the years, given that
 
 In particular, I'd always wanted a proxy that could do [Batch API][2], too.
 
-Currently, simp in both CLI and daemon mode only tracks the models that have been explictly defined, however this is about to change soon with all the state-keeping changes; some providers have list endpoints, others don't but it's really killing latency to poll for model list to route providers... This is why some kind of per-provider list cache is needed, and while I'm at it, I thought I might do state properly.
+Currently, simp in both CLI and daemon mode only tracks the models that have been explictly defined, however this is about to change soon with all the state-keeping changes; some providers have list endpoints, others don't but it's really killing latency to poll for model list to route providers... This is why some kind of per-provider list cache is needed, and while I'm at it, I thought I might do state properly. Well, at least it reload during run-time on config changes so you may introduce new changes without having to restart the whole thing. However, this may not necessarily be the case if involving some keychains.
 
 ### RAG
 I've been quite impressed with [Cursor][7] recently, and in particular it's diff and codebase search features. This is something that is missing from my Vim workflow, and if I were to replicate it, I would be very happy. This was the primary motivator, in fact, behind the daemon. (The other is having a provider-agnostic batching proxy.)
 
-Now again, there's many RAG providers, vector databases, and whatnot. Even though I might only support _some_ of them (but probably just [pgvector][8] and [pgvecto.rs][9] which is what I use) through a generic configuration interface, the build will most definitely include [sqlite-vec][6] because state.
+Now again, there's many RAG providers, vector databases, and whatnot. Even though I may support _some_ of them in the future (but probably just [pgvector][8] and [pgvecto.rs][9] which is what I use) through a generic configuration interface, Simp is currently using [sqlite-vec][6] so that's where RAG will go when it eventually lands master.
 
 I'm not sure I like the "index all" that is not in `.cursorignore` approach, though.
 
@@ -108,24 +110,35 @@ Simp tools will use `$SIMPPATH` that is set to `$HOME/.simp` by default.
 
 For basic use, interactive `simp -configure` is sufficient.
 
-The config files are located in `$SIMPPATH/config` in [HCL][5] format, so Terraform users will find it familiar!
+The config files are located in `$SIMPPATH/config` in [HCL][5] format, so Terraform users will find it familiar! The state is contained in `$SIMPPATH/books.db3` which is a SQLite database with vector extension. The config is structured to allow various keychain, authentication, and authorization backends: each provider gets its own view of the keychain, allowing it to persist various settings so as not to impact others.
 
 ```hcl
 default {
-	model = "4o"
+	model = "cs35"
 	temperature = 0.7
-	# ... the usual suspects ...
 }
 
 daemon {
 	listen_addr = "127.0.0.1:51015"
-	#allowed_ips = ["10.0.0.0/8"]
+	allowed_ips = ["10.0.0.0/8"]
 }
 
 # use macOS system keychain
 auth "keyring" "default" {
 	backend = "keychain"
 	keychain_icloud = true
+}
+
+provider "openai" "api" {
+	model "gpt-4o" {
+		alias = ["4o"]
+	}
+	model "gpt-4o-mini" {
+		alias = ["4om"]
+	}
+	model "o1-preview" {
+		alias = ["o1"]
+	}
 }
 
 provider "vertex" "api" {
@@ -144,6 +157,7 @@ provider "vertex" "api" {
 }
 
 provider "anthropic" "api" {
+	# -latest is not necessary; the gateway will assume and rewrite accordingly
 	model "claude-3-5-sonnet" {
 		alias = ["cs35"]
 		latest = true
@@ -153,6 +167,7 @@ provider "anthropic" "api" {
 		latest = true
 	}
 }
+
 provider "openai" "ollama" {
 	base_url = "http://127.0.0.1:11434/v1"
 	model "gemma-2-9b-simpo" {
@@ -189,20 +204,18 @@ Normally, a provider would require any given batch to be completions-only, or em
 
 Since `simp -daemon` has to translate batch formats regardless, it allows batches with arbitrary content, and arbitrary providers. You may address OpenAI, Anthropic, _and_ Google models all in the same batch, but also even the providers that _do not_ support batching. In that case, the dameon would treat your batch as "virtual", partition it into per-model chunks, and gather them on completion. If the model provider referenced in the batch does not support batching natively, the relevant tasks will trickle down at quota speed using normal endpoints. To consumer this behaviour is transparent; you get to create one OpenAI-style batch using whatever configured models (aliases) or providers, & the daemon would take care of the rest.
 
-If you work with text datasets as much as I do, my money is you would find this behaviour as _liberating_ at least as much as I do.
+> If you work with text datasets as much as I do, my money is you would find this behaviour as _liberating_ at least as much as I do. Although you should note that the implementation is quite complex, so there may be bugs. I have done end-to-end testing, and dogfood eat everyday, but I cannot guarantee that your big batch won't go bust!
 
 #### Vertex
 Note that Vertex AI's [Batch API][15] requires a BigQuery dataset for communicating back the results. Well, there's the bucket option, however it's really messy to match `custom_id` from the responses, as they're out-of-order, and that would make it really complicated to handle. Therefore, by default Batch API is disabled for Vertex providers, see [Configuration](#configuration) for example configuration that covers all bases.
 
 #### Use case
 
-I will soon be show-casing the [pg_bluerose][11] extension that brings LLM primitives to Postgres, including batching:
+I will soon be show-casing the [pg_bluerose][11] extension that brings LLM primitives to Postgres.
 
 ```sql
 -- load a Hugginface dataset without ever writing it to disk (courtesy of pg_analytics)
-create foreign table hf.ukr_pravda_2y ()
-server parquet
-options (
+create foreign table hf.ukr_pravda_2y () server parquet options (
     files 'hf://datasets/shamotskyi/ukr_pravda_2y/parquet/default/train/*.parquet'
 );
 
@@ -223,20 +236,7 @@ create or replace view ukr_pravda_2y as
         -- later: joined from foreign table
         d.*
     from hf.ukr_pravda_2y as d;
-
 select complete_all('ukr_pravda_2y', batch => true);
--- roughly does as follows:
---
--- CREATE TABLE bluerose.[dataset] AS
---     SELECT columns before tally;
--- CREATE INDEX ...
--- INSERT INTO bluerose.jobs ...
--- CREATE OR REPLACE VIEW [dataset] AS
---     SELECT
---         columns from internal batch-table
---         join
---         columns from original dataset
---     FROM bluerose.[dataset], LATERAL [DDL]
 
 -- later: query only what's been completed so far
 select id, q, a, v from urk_pravda_2y where v is not null;
@@ -320,3 +320,6 @@ MIT
 [13]: https://en.wikipedia.org/wiki/Directed_acyclic_graph
 [14]: https://en.wikipedia.org/wiki/Monte_Carlo_tree_search
 [15]: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/batch-prediction-gemini
+[16]: https://jina.ai/news/jina-embeddings-v3-a-frontier-multilingual-embedding-model/#parameter-latechunking
+[17]: https://github.com/busthorne/go-openai
+[18]: https://github.com/sashabaranov/go-openai
