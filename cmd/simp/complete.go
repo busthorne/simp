@@ -62,10 +62,10 @@ func promptComplete() error {
 		Stream:           !*discrete,
 		Model:            model.Name,
 		Messages:         cable.Messages(),
-		Temperature:      coalesce32(temperature, cfg.Default.Temperature, model.Temperature),
-		TopP:             coalesce32(topP, cfg.Default.TopP, model.TopP),
-		FrequencyPenalty: coalesce32(frequencyPenalty, cfg.Default.FrequencyPenalty, model.FrequencyPenalty),
-		PresencePenalty:  coalesce32(presencePenalty, cfg.Default.PresencePenalty, model.PresencePenalty),
+		Temperature:      coalesce32(temperature, model.Temperature, cfg.Default.Temperature),
+		TopP:             coalesce32(topP, model.TopP, cfg.Default.TopP),
+		FrequencyPenalty: coalesce32(frequencyPenalty, model.FrequencyPenalty, cfg.Default.FrequencyPenalty),
+		PresencePenalty:  coalesce32(presencePenalty, model.PresencePenalty, cfg.Default.PresencePenalty),
 	})
 	if err != nil {
 		stderrf("%T %v\n", drv, err)

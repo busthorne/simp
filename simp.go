@@ -26,6 +26,8 @@ var (
 	ErrBatchDeferred = errors.New("batch must be deferred until send time")
 	// ErrBookkeeping is returned when bookkeeping fails.
 	ErrBookkeeping = errors.New("bookkeeping error")
+	// ErrRetry is returned by drivers to indicate that the error is transient in nature.
+	ErrRetry = errors.New("retry")
 )
 
 func init() {

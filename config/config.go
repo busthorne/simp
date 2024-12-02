@@ -11,7 +11,7 @@ import (
 
 // Config is the root configuration.
 type Config struct {
-	Default   Default    `hcl:"default,block"`
+	Default   *Default   `hcl:"default,block"`
 	Daemon    *Daemon    `hcl:"daemon,block"`
 	History   *History   `hcl:"history,block"`
 	Auth      []Auth     `hcl:"auth,block"`
@@ -65,6 +65,8 @@ type ModelDefault struct {
 	TopP             *float64 `hcl:"top_p,optional"`
 	FrequencyPenalty *float64 `hcl:"frequency_penalty,optional"`
 	PresencePenalty  *float64 `hcl:"presence_penalty,optional"`
+	Seed             *int32   `hcl:"seed,optional"`
+	Stop             []string `hcl:"stop,optional"`
 }
 
 // Daemon is the simpd portion of the config, the key and cert files
@@ -166,16 +168,19 @@ type Provider struct {
 //
 // It's up to driver whether to allow models by default.
 type Model struct {
-	ModelDefault
 	Name          string   `hcl:"name,label"`
 	Alias         []string `hcl:"alias,optional"`
 	Tags          []string `hcl:"tags,optional"`
 	AllowedIPs    []string `hcl:"allowed_ips,optional"`
 	ContextLength int      `hcl:"context_length,optional"`
+	Dimensions    int      `hcl:"dimensions,optional"`
 	Latest        bool     `hcl:"latest,optional"`
 	Ignore        bool     `hcl:"ignore,optional"`
 	Embedding     bool     `hcl:"embedding,optional"`
 	Images        bool     `hcl:"images,optional"`
+	Videos        bool     `hcl:"videos,optional"`
+
+	ModelDefault
 }
 
 func (m Model) ShortestAlias() (alias string) {

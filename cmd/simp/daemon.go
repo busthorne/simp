@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +86,8 @@ func listen() *fiber.App {
 		}
 		log.Debugf("embedding model %s (%T)\n", model.Name, drv)
 		req.Model = model.Name
-		resp, err := drv.Embed(c.Context(), req)
+		ctx := context.WithValue(c.Context(), simp.KeyModel, model)
+		resp, err := drv.Embed(ctx, req)
 		if err != nil {
 			return internalError(c, err)
 		}
@@ -107,7 +109,8 @@ func listen() *fiber.App {
 		}
 		log.Debugf("completion model %s (%T)\n", model.Name, drv)
 		req.Model = model.Name
-		resp, err := drv.Chat(c.Context(), req)
+		ctx := context.WithValue(c.Context(), simp.KeyModel, model)
+		resp, err := drv.Chat(ctx, req)
 		if err != nil {
 			return internalError(c, err)
 		}

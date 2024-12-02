@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/books"
+	"github.com/busthorne/simp/config"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/google/uuid"
@@ -48,6 +50,8 @@ func BatchUpload(c *fiber.Ctx) error {
 		drivers = map[string]simp.BatchDriver{}
 		// magazine by model name
 		inputs = map[string][]openai.BatchInput{}
+		// model config by model name
+		models = map[string]config.Model{}
 		// will parse one request at a time
 		lines = json.NewDecoder(f)
 		// ids
@@ -88,7 +92,7 @@ func BatchUpload(c *fiber.Ctx) error {
 		if err != nil {
 			return malformed(fmt.Errorf("model %q: %w", model, err))
 		}
-		model = m.Name
+		models[model] = m
 		// cache the batch driver variant
 		if _, ok := drivers[model]; !ok {
 			bd, _ := d.(simp.BatchDriver)
@@ -105,23 +109,23 @@ func BatchUpload(c *fiber.Ctx) error {
 				switch m.Role {
 				case "system":
 					if i != 0 {
-						return malformed(fmt.Errorf("system message/%d is misplaced", i+1))
+						return malformed(fmt.Errorf("system message/%d is misplaced", i))
 					}
 				case "user", "assistant":
 					if alt == m.Role {
-						return malformed(fmt.Errorf("message/%d is not alternating", i+1))
+						return malformed(fmt.Errorf("message/%d is not alternating", i))
 					}
 				default:
-					return malformed(fmt.Errorf("message/%d unsupported role %q", i+1, m.Role))
+					return malformed(fmt.Errorf("message/%d unsupported role %q", i, m.Role))
 				}
 				alt = m.Role
 			}
-			input.ChatCompletion.Model = model
+			input.ChatCompletion.Model = m.Name
 		case input.Embedding != nil:
 			if !m.Embedding {
 				return malformed(fmt.Errorf("model %q is not an embedding model", model))
 			}
-			input.Embedding.Model = model
+			input.Embedding.Model = m.Name
 		default:
 			return malformed(errMeatNorFish)
 		}
@@ -180,6 +184,7 @@ eof:
 				},
 				Metadata: map[string]any{},
 			}
+			ctx := context.WithValue(ctx, simp.KeyModel, models[model])
 			switch err := bd.BatchUpload(ctx, &b, inputs); err {
 			case simp.ErrNotImplemented:
 				// i.e. openai-compatible providers that do not support batching
@@ -262,19 +267,23 @@ func BatchSend(c *fiber.Ctx) error {
 	for _, sub := range subs {
 		batch := sub.Body
 
-		bd, _, err := findBaldo(sub.Model)
+		bd, m, err := findBaldo(sub.Model)
 		if err != nil {
 			return fmt.Errorf("model %q is not available for batching", sub.Model)
 		}
 
+		var ctx context.Context = ctx
+
 		// pre-deferred
-		if _, ok := batch.Metadata["deferred"]; ok {
+		_, deferred := batch.Metadata["deferred"]
+		if deferred {
 			inputs, err := book.BatchOps(ctx, batch.ID)
 			if err != nil {
 				return notkeep(err, "fetch deferred ops")
 			}
-			batch.Metadata["inputs"] = inputs
+			ctx = context.WithValue(ctx, simp.KeyBatchInputs, inputs)
 		}
+		ctx = context.WithValue(ctx, simp.KeyModel, m)
 
 		// send
 		if err := bd.BatchSend(ctx, &batch); err != nil {
@@ -289,9 +298,9 @@ func BatchSend(c *fiber.Ctx) error {
 			batch.Status = openai.BatchStatusInProgress
 			batch.InProgressAt = now.Unix()
 		}
+
 		// post-deferred
-		if _, ok := batch.Metadata["deferred"]; ok {
-			delete(batch.Metadata, "inputs")
+		if deferred {
 			if err := book.DeleteBatchOps(ctx, batch.ID); err != nil {
 				return notkeep(err, "delete deferred ops")
 			}

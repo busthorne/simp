@@ -64,19 +64,27 @@ func (v *Vertex) Embed(ctx context.Context, req openai.EmbeddingRequest) (e open
 
 	instances := make([]*structpb.Value, len(texts))
 	for i, text := range texts {
-		fields := map[string]*structpb.Value{
-			"content": structpb.NewStringValue(text),
+		p := map[string]any{"content": text}
+		switch {
+		case req.Task != "":
+			p["task_type"] = req.Task
+		case req.LateChunking:
+			p["task_type"] = "RETRIEVAL_DOCUMENT"
 		}
-		if req.Task != "" {
-			fields["task_type"] = structpb.NewStringValue(req.Task)
+		v, err := structpb.NewValue(p)
+		if err != nil {
+			return e, fmt.Errorf("cannot marshal instance/%d: %w", i, err)
 		}
-		instances[i] = structpb.NewStructValue(&structpb.Struct{Fields: fields})
+		instances[i] = v
 	}
-	params := structpb.NewStructValue(&structpb.Struct{
-		Fields: map[string]*structpb.Value{
-			"outputDimensionality": structpb.NewNumberValue(float64(req.Dimensions)),
-		},
-	})
+	p := map[string]any{}
+	if v := req.Dimensions; v != 0 {
+		p["outputDimensionality"] = v
+	}
+	params, err := structpb.NewValue(p)
+	if err != nil {
+		return e, fmt.Errorf("cannot marshal model parameters: %w", err)
+	}
 	resp, err := client.Predict(ctx, &aipb.PredictRequest{
 		Endpoint: fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s",
 			v.Project,
@@ -121,6 +129,19 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	defer client.Close()
 
 	model := client.GenerativeModel(req.Model)
+	model.SetTemperature(req.Temperature)
+	if v := req.MaxTokens; v != 0 {
+		model.SetMaxOutputTokens(int32(v))
+	}
+	if v := req.TopP; v != 0 {
+		model.TopP = &v
+	}
+	if v := req.FrequencyPenalty; v != 0 {
+		model.FrequencyPenalty = &v
+	}
+	if v := req.PresencePenalty; v != 0 {
+		model.PresencePenalty = &v
+	}
 	cs := model.StartChat()
 	h := []*genai.Content{}
 	for i, msg := range req.Messages {
@@ -257,29 +278,50 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 	if err != nil {
 		return fmt.Errorf("failed to insert batch: %w", err)
 	}
-	for model := range models {
-		batch.Metadata["model"] = model
-	}
 	batch.InputFileID = table
 	return nil
 }
 
 func (v *Vertex) BatchSend(ctx context.Context, batch *openai.Batch) error {
+	m, ok := ctx.Value(simp.KeyModel).(config.Model)
+	if !ok {
+		return fmt.Errorf("model not found")
+	}
 	client, err := v.jobClient(ctx)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
-	var params *structpb.Value
-	if p, ok := batch.Metadata["model_parameters"]; ok {
-		params, err = structpb.NewValue(p)
-		if err != nil {
-			return fmt.Errorf("cannot marshal model parameters: %w", err)
-		}
+	p := map[string]any{}
+	if v := m.MaxTokens; v != 0 {
+		p["maxOutputTokens"] = v
+	}
+	if v := m.Temperature; v != nil {
+		p["temperature"] = *v
+	}
+	if v := m.TopP; v != nil {
+		p["topP"] = *v
+	}
+	if v := m.FrequencyPenalty; v != nil {
+		p["frequencyPenalty"] = *v
+	}
+	if v := m.PresencePenalty; v != nil {
+		p["presencePenalty"] = *v
+	}
+	if v := m.Seed; v != nil {
+		p["seed"] = *v
+	}
+	if v := m.Stop; len(v) > 0 {
+		p["stopSequences"] = v
+	}
+	params, err := structpb.NewValue(p)
+	if err != nil {
+		return fmt.Errorf("cannot marshal model parameters: %w", err)
 	}
 
 	ifd := batch.InputFileID
+
 	input := fmt.Sprintf("bq://%s.%s.%s",
 		v.Project,
 		v.Dataset,
@@ -295,7 +337,7 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *openai.Batch) error {
 		BatchPredictionJob: &aipb.BatchPredictionJob{
 			DisplayName:     ifd,
 			ModelParameters: params,
-			Model:           "publishers/google/models/" + batch.Metadata["model"].(string),
+			Model:           "publishers/google/models/" + m.Name,
 			InputConfig: &aipb.BatchPredictionJob_InputConfig{
 				Source: &aipb.BatchPredictionJob_InputConfig_BigquerySource{
 					BigquerySource: &aipb.BigQuerySource{InputUri: input},
@@ -336,7 +378,7 @@ func (v *Vertex) BatchRefresh(ctx context.Context, batch *openai.Batch) error {
 		return fmt.Errorf("cannot get job: %w", err)
 	}
 	batch.Metadata["state"] = job.GetState()
-	batch.Metadata["dest"] = job.GetOutputInfo().GetGcsOutputDirectory()
+	batch.OutputFileID = job.GetOutputInfo().GetGcsOutputDirectory()
 	v.updateStatus(batch, job.GetState())
 	return nil
 }

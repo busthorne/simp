@@ -43,8 +43,8 @@ func ParsePath(path string) (*Config, error) {
 			c.Diagnostics[f.Name()] = d
 			continue
 		}
-		if fc.Default != (Default{}) {
-			if c.Default != (Default{}) {
+		if fc.Default != nil {
+			if c.Default != nil {
 				diagnose(fmt.Errorf("duplicate default block"))
 			}
 			c.Default = fc.Default

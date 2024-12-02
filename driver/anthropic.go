@@ -30,17 +30,28 @@ type Anthropic struct {
 	p config.Provider
 }
 
-func (a *Anthropic) maxTokens(tokens int) int64 {
-	if tokens > 0 {
-		return int64(tokens)
-	}
-	return 8192
-}
-
 func (a *Anthropic) translate(ctx context.Context, req openai.ChatCompletionRequest) (anthropic.BetaMessageNewParams, error) {
+	m, _ := ctx.Value(simp.KeyModel).(config.Model)
+	maxTokens := 4096
+	if req.MaxTokens > 0 {
+		maxTokens = req.MaxTokens
+	} else if m.MaxTokens > 0 {
+		maxTokens = m.MaxTokens
+	}
 	p := anthropic.BetaMessageNewParams{
-		Model:     anthropic.F(req.Model),
-		MaxTokens: anthropic.F(a.maxTokens(req.MaxTokens)),
+		Model:       anthropic.F(req.Model),
+		Temperature: anthropic.F(float64(req.Temperature)),
+		MaxTokens:   anthropic.F(int64(maxTokens)),
+	}
+	if req.TopP > 0 {
+		p.TopP = anthropic.F(float64(req.TopP))
+	} else if m.TopP != nil {
+		p.TopP = anthropic.F(float64(*m.TopP))
+	}
+	if len(req.Stop) > 0 {
+		p.StopSequences = anthropic.F(req.Stop)
+	} else if len(m.Stop) > 0 {
+		p.StopSequences = anthropic.F(m.Stop)
 	}
 
 	messages := []anthropic.BetaMessageParam{}
@@ -62,7 +73,7 @@ func (a *Anthropic) translate(ctx context.Context, req openai.ChatCompletionRequ
 			}
 			alt = role
 		default:
-			return p, fmt.Errorf("message %d: %w", i+1, simp.ErrUnsupportedRole)
+			return p, fmt.Errorf("message/%d: %q %w", i, role, simp.ErrUnsupportedRole)
 		}
 
 		var blocks []anthropic.BetaContentBlockParamUnion
@@ -107,12 +118,6 @@ func (a *Anthropic) translate(ctx context.Context, req openai.ChatCompletionRequ
 		})
 	}
 	p.Messages = anthropic.F(messages)
-	if req.Temperature > 0 {
-		p.Temperature = anthropic.F(float64(req.Temperature))
-	}
-	if req.TopP > 0 {
-		p.TopP = anthropic.F(float64(req.TopP))
-	}
 	return p, nil
 }
 
@@ -184,7 +189,7 @@ func (a *Anthropic) BatchUpload(ctx context.Context, b *openai.Batch, inputs []o
 }
 
 func (a *Anthropic) BatchSend(ctx context.Context, b *openai.Batch) error {
-	inputs, ok := b.Metadata["inputs"].([]openai.BatchInput)
+	inputs, ok := ctx.Value(simp.KeyBatchInputs).([]openai.BatchInput)
 	if !ok {
 		return fmt.Errorf("inputs are unknown at send time")
 	}

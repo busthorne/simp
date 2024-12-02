@@ -27,10 +27,13 @@ type Gemini struct {
 }
 
 func (g *Gemini) List(ctx context.Context) ([]openai.Model, error) {
-	// Gemini currently has limited models, so we'll return a static list
 	return []openai.Model{
-		{ID: "gemini-pro"},
-		{ID: "gemini-pro-vision"},
+		{ID: "gemini-1.5-pro"},
+		{ID: "gemini-1.5-flash"},
+		{ID: "gemini-1.5-flash-8b"},
+		{ID: "learnlm-1.5-pro-experimental"},
+		{ID: "gemini-exp-1114"},
+		{ID: "gemini-exp-1121"},
 	}, nil
 }
 
@@ -40,6 +43,28 @@ func (g *Gemini) Embed(ctx context.Context, req openai.EmbeddingRequest) (e open
 		return e, err
 	}
 	model := client.EmbeddingModel(req.Model)
+	if task := strings.ToLower(req.Task); task != "" {
+		var typ genai.TaskType
+		switch task {
+		case "retrieval_query":
+			typ = genai.TaskTypeRetrievalQuery
+		case "retrieval_document":
+			typ = genai.TaskTypeRetrievalDocument
+		case "semantic_similarity":
+			typ = genai.TaskTypeSemanticSimilarity
+		case "classification":
+			typ = genai.TaskTypeClassification
+		case "clustering":
+			typ = genai.TaskTypeClustering
+		case "question_answering":
+			typ = genai.TaskTypeQuestionAnswering
+		case "fact_verification":
+			typ = genai.TaskTypeFactVerification
+		default:
+			typ = genai.TaskTypeUnspecified
+		}
+		model.TaskType = typ
+	}
 	batch := model.NewBatch()
 	switch input := req.Input.(type) {
 	case string:
@@ -74,6 +99,13 @@ func (g *Gemini) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 		return c, err
 	}
 	model := client.GenerativeModel(req.Model)
+	model.SetTemperature(req.Temperature)
+	if v := req.MaxTokens; v != 0 {
+		model.SetMaxOutputTokens(int32(v))
+	}
+	if v := req.TopP; v != 0 {
+		model.TopP = &v
+	}
 	chat := model.StartChat()
 	// Convert the messages to Gemini format
 	for i, msg := range req.Messages {
@@ -103,21 +135,21 @@ func (g *Gemini) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 				case openai.ChatMessagePartTypeImageURL:
 					mime, b, err := url2image64(ctx, part.ImageURL.URL)
 					if err != nil {
-						return c, fmt.Errorf("message %d part %d: %w", i, j, err)
+						return c, fmt.Errorf("message/%d part/%d: %w", i, j, err)
 					}
 					m := strings.TrimPrefix(mime, "image/")
 					switch m {
 					case "jpeg", "png":
 					default:
-						return c, fmt.Errorf("message %d part %d: %w", i, j, simp.ErrUnsupportedMime)
+						return c, fmt.Errorf("message/%d part/%d: %w", i, j, simp.ErrUnsupportedMime)
 					}
 					parts = append(parts, genai.ImageData(m, b))
 				default:
-					return c, fmt.Errorf("message %d part %d: type %s is not supported", i, j, part.Type)
+					return c, fmt.Errorf("message/%d part/%d: type %s is not supported", i, j, part.Type)
 				}
 			}
 		default:
-			return c, fmt.Errorf("empty message %d", i+1)
+			return c, fmt.Errorf("empty message/%d", i)
 		}
 		chat.History = append(chat.History, &genai.Content{Parts: parts, Role: role})
 	}
