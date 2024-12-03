@@ -126,11 +126,23 @@ func listen() *fiber.App {
 		c.Status(200)
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 			var ret error
-			for ch := range resp.Stream {
-				c := ch.Choices[0]
+			for chunk := range resp.Stream {
+				if len(chunk.Choices) == 0 {
+					if chunk.Usage != nil {
+						fmt.Fprint(w, "data: ")
+						json.NewEncoder(w).Encode(openai.ChatCompletionStreamResponse{
+							Object:  "chat.completion.chunk",
+							Usage:   chunk.Usage,
+							Created: time.Now().Unix(),
+						})
+						w.Flush()
+					}
+					continue
+				}
+				c := chunk.Choices[0]
 
 				if c.FinishReason == "error" {
-					ret = ch.Error
+					ret = chunk.Error
 					break
 				}
 				delta := openai.ChatCompletionStreamChoiceDelta{

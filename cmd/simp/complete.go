@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/busthorne/simp"
 	"github.com/sashabaranov/go-openai"
@@ -50,32 +52,45 @@ func promptComplete() error {
 		return fmt.Errorf("bad cable: %v", err)
 	}
 	ws = cable.Whitespace
-	drv, model, err := findWaldo(model)
+	drv, m, err := findWaldo(model)
 	if err != nil {
 		return err
 	}
 	if *vim || *interactive {
 		fmt.Println()
-		fmt.Printf("%s%s %s\n", ws, simp.MarkAsst, model.ShortestAlias())
+		fmt.Printf("%s%s %s\n", ws, simp.MarkAsst, m.ShortestAlias())
 	}
-	resp, err := drv.Chat(bg, openai.ChatCompletionRequest{
-		Stream:           !*discrete,
-		Model:            model.Name,
+	var so *openai.StreamOptions
+	if !*nos {
+		so = &openai.StreamOptions{
+			IncludeUsage: true,
+		}
+	}
+	start := time.Now()
+	ctx := context.WithValue(bg, simp.KeyModel, m)
+	resp, err := drv.Chat(ctx, openai.ChatCompletionRequest{
+		Stream:           !*nos,
+		Model:            m.Name,
 		Messages:         cable.Messages(),
-		Temperature:      coalesce32(temperature, model.Temperature, cfg.Default.Temperature),
-		TopP:             coalesce32(topP, model.TopP, cfg.Default.TopP),
-		FrequencyPenalty: coalesce32(frequencyPenalty, model.FrequencyPenalty, cfg.Default.FrequencyPenalty),
-		PresencePenalty:  coalesce32(presencePenalty, model.PresencePenalty, cfg.Default.PresencePenalty),
+		Temperature:      coalesce32(temperature, m.Temperature, cfg.Default.Temperature),
+		TopP:             coalesce32(topP, m.TopP, cfg.Default.TopP),
+		FrequencyPenalty: coalesce32(frequencyPenalty, m.FrequencyPenalty, cfg.Default.FrequencyPenalty),
+		PresencePenalty:  coalesce32(presencePenalty, m.PresencePenalty, cfg.Default.PresencePenalty),
+		StreamOptions:    so,
 	})
 	if err != nil {
 		stderrf("%T %v\n", drv, err)
 		exit(1)
 	}
-	if *discrete {
-		fmt.Print(resp.Choices[0].Message.Content)
+	if *nos {
+		fmt.Println(resp.Choices[0].Message.Content)
 		goto suffix
 	}
 	for chunk := range resp.Stream {
+		if chunk.Usage != nil {
+			resp.Usage = *chunk.Usage
+			continue
+		}
 		c := chunk.Choices[0]
 		switch c.FinishReason {
 		case "":
@@ -87,12 +102,22 @@ func promptComplete() error {
 		case "content_filter":
 		case "null":
 		case "error":
-			stderrf("\nstream complete: %v\n", chunk.Error)
+			stderr("stream complete:", chunk.Error)
 			exit(1)
 		}
 	}
-suffix:
 	fmt.Println()
+suffix:
+	if *verbose {
+		stderrf("\n\t\t\t%d", resp.Usage.PromptTokens)
+		if resp.Usage.PromptTokensDetails != nil {
+			stderrf(" (%d)", resp.Usage.PromptTokensDetails.CachedTokens)
+		}
+		stderrf(" + %d = %d\t%v\n",
+			resp.Usage.CompletionTokens,
+			resp.Usage.TotalTokens,
+			time.Since(start).Round(time.Second/100))
+	}
 	if *vim {
 		fmt.Printf("\n%s%s\n\n", ws, simp.MarkUser)
 	}

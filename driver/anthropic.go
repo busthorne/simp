@@ -138,12 +138,20 @@ func (a *Anthropic) Chat(ctx context.Context, req openai.ChatCompletionRequest) 
 	if err != nil {
 		return c, err
 	}
-	if req.Stream {
-		c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
-	} else {
+	if !req.Stream {
 		resp, err := a.Beta.Messages.New(ctx, params)
 		if err != nil {
 			return c, err
+		}
+		c.Usage = openai.Usage{
+			PromptTokens:     int(resp.Usage.InputTokens),
+			CompletionTokens: int(resp.Usage.OutputTokens),
+		}
+		c.Usage.TotalTokens = c.Usage.PromptTokens + c.Usage.CompletionTokens
+		if n := resp.Usage.CacheReadInputTokens; n > 0 {
+			c.Usage.PromptTokensDetails = &openai.PromptTokensDetails{
+				CachedTokens: int(n),
+			}
 		}
 		c.Choices = []openai.ChatCompletionChoice{{
 			Message: openai.ChatCompletionMessage{
@@ -153,13 +161,25 @@ func (a *Anthropic) Chat(ctx context.Context, req openai.ChatCompletionRequest) 
 		}}
 		return
 	}
+	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
 		defer close(c.Stream)
+		var usage openai.Usage
 		stream := a.Beta.Messages.NewStreaming(ctx, params)
-		for stream.Next() {
+		for i := 0; stream.Next(); i++ {
 			event := stream.Current()
+			if i == 0 {
+				usage.PromptTokens = int(event.Message.Usage.InputTokens)
+				if n := event.Message.Usage.CacheReadInputTokens; n > 0 {
+					usage.PromptTokensDetails = &openai.PromptTokensDetails{
+						CachedTokens: int(n),
+					}
+				}
+			}
 			switch delta := event.Delta.(type) {
-			case anthropic.ContentBlockDeltaEventDelta:
+			case anthropic.BetaRawMessageDeltaEventDelta:
+				usage.CompletionTokens += int(event.Usage.OutputTokens)
+			case anthropic.BetaRawContentBlockDeltaEventDelta:
 				if delta.Text == "" {
 					continue
 				}
@@ -179,6 +199,15 @@ func (a *Anthropic) Chat(ctx context.Context, req openai.ChatCompletionRequest) 
 				}},
 				Error: err,
 			}
+			return
+		} else {
+			c.Stream <- openai.ChatCompletionStreamResponse{
+				Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "stop"}},
+			}
+		}
+		if so := req.StreamOptions; so != nil && so.IncludeUsage {
+			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			c.Stream <- openai.ChatCompletionStreamResponse{Usage: &usage}
 		}
 	}()
 	return

@@ -142,10 +142,11 @@ provider "openai" "api" {
 }
 
 provider "vertex" "api" {
-	region = "europe-north1"
 	project = "simp"
-	# Batch Prediction API uses a BigQuery dataset which must be created beforehand.
+	region = "europe-north1"
+	bucket = "simpmedia"
 	dataset = "simpbatches"
+	# Batch Prediction API uses a BigQuery dataset which must be created beforehand.
 	batch = true
 
 	model "gemini-1.5-flash-002" {
@@ -170,6 +171,7 @@ provider "anthropic" "api" {
 
 provider "openai" "ollama" {
 	base_url = "http://127.0.0.1:11434/v1"
+
 	model "gemma-2-9b-simpo" {
 		alias = ["g9s"]
 		tags = ["q4_0", "q8_0"] # the first tag is the default

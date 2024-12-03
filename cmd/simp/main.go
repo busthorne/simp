@@ -30,7 +30,7 @@ var (
 	historypath      = flag.Bool("historypath", false, "display history path per current location")
 	interactive      = flag.Bool("i", false, "interactive mode")
 	verbose          = flag.Bool("v", false, "verbose output")
-	discrete         = flag.Bool("discrete", false, "disable streaming")
+	nos              = flag.Bool("nos", false, "disable streaming")
 	lessThan         = flag.Int("lt", 0, "less than this many tokens")
 	temperature      = flag.Float64("t", 0, "temperature")
 	topP             = flag.Float64("p", 0, "top_p sampling")
