@@ -126,7 +126,6 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	if err != nil {
 		return c, err
 	}
-	defer client.Close()
 
 	model := client.GenerativeModel(req.Model)
 	model.SetTemperature(req.Temperature)
@@ -173,6 +172,7 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	cs.History = h[:len(h)-1]
 	tail := h[len(h)-1].Parts
 	if !req.Stream {
+		defer client.Close()
 		resp, err := cs.SendMessage(ctx, tail...)
 		if err != nil {
 			return c, err
@@ -195,7 +195,10 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	it := cs.SendMessageStream(ctx, tail...)
 	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
+		defer client.Close()
 		defer close(c.Stream)
+
+		var usage *openai.Usage
 		for {
 			chunk, err := it.Next()
 			switch err {
@@ -209,10 +212,22 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 					})
 				}
 				c.Stream <- openai.ChatCompletionStreamResponse{Choices: choices}
+
+				if u := chunk.UsageMetadata; u != nil && u.TotalTokenCount > 0 {
+					usage = &openai.Usage{
+						PromptTokens:     int(u.PromptTokenCount),
+						CompletionTokens: int(u.CandidatesTokenCount),
+						TotalTokens:      int(u.TotalTokenCount),
+					}
+				}
 			case iterator.Done:
 				c.Stream <- openai.ChatCompletionStreamResponse{
 					Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "stop"}},
 				}
+				if so := req.StreamOptions; so != nil && so.IncludeUsage && usage != nil {
+					c.Stream <- openai.ChatCompletionStreamResponse{Usage: usage}
+				}
+				return
 			default:
 				c.Stream <- openai.ChatCompletionStreamResponse{
 					Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "error"}},
