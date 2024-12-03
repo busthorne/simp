@@ -160,6 +160,7 @@ type Provider struct {
 	Project string `hcl:"project,optional"`
 	Region  string `hcl:"region,optional"`
 	Dataset string `hcl:"dataset,optional"`
+	Bucket  string `hcl:"bucket,optional"`
 }
 
 // Model is a set of overrides passed to driver so that it can better

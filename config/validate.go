@@ -13,8 +13,7 @@ var (
 	ƒ                  = fmt.Sprintf
 	ø                  = fmt.Errorf
 	nonAlphanumeric    = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
-	errNonAlphanumeric = errors.New("does not conform to " +
-		nonAlphanumeric.String())
+	errNonAlphanumeric = errors.New("does not conform to " + nonAlphanumeric.String())
 )
 
 func (c *Config) Validate() error {
@@ -36,13 +35,12 @@ func (c *Config) Validate() error {
 			a.Default = true
 			c.Auth[i] = a
 		}
-		collect(a.Validate(), ƒ(`auth "%s" "%s"`, a.Type, a.Name))
+		collect(a.Validate(), ƒ("auth %q %q", a.Type, a.Name))
 
-		id := a.Type + ":" + a.Name
-		if _, ok := auths[id]; ok {
-			collect(ø(`duplicate auth "%s" "%s"`, a.Name, a.Type))
+		if _, ok := auths[a.Name]; ok {
+			collect(ø("duplicate auth name %q", a.Name))
 		}
-		auths[id] = count{}
+		auths[a.Name] = count{}
 		if n, ok := defaults[a.Type]; ok {
 			defaults[a.Type] = n + 1
 		} else {
@@ -62,11 +60,11 @@ func (c *Config) Validate() error {
 		}
 	}
 	for _, p := range c.Providers {
-		collect(p.Validate(), ƒ(`provider "%s" "%s"`, p.Driver, p.Name))
+		collect(p.Validate(), ƒ("provider %q %q", p.Driver, p.Name))
 
 		id := p.Driver + ":" + p.Name
 		if _, ok := providers[id]; ok {
-			collect(ø(`duplicate provider "%s" "%s"`, p.Driver, p.Name))
+			collect(ø("duplicate provider %q %q", p.Driver, p.Name))
 		}
 		providers[id] = count{}
 		for _, m := range p.Models {
@@ -117,7 +115,7 @@ func (p *Provider) Validate() error {
 		}
 	}
 	for _, m := range p.Models {
-		collect(m.Validate(), ƒ(`model "%s" "%s"`, p.Name, m.Name))
+		collect(m.Validate(), ƒ("model %q %q", p.Name, m.Name))
 	}
 	// TODO: validate
 	return err.Invalid()

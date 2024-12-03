@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path"
@@ -26,6 +27,15 @@ func wizard() {
 		reader:     bufio.NewReader(os.Stdin),
 		configPath: path.Join(simp.Path, "config"),
 	}
+	if alreadyExists(w.configPath) {
+		fmt.Println("Simp looks like it's already configured.")
+		fmt.Println()
+		if w.confirm("Would you like to skip wizard and configure API keys instead?") {
+			w.configureApikeys()
+			return
+		}
+	}
+
 	// first, ask them where they want the config to go
 	for {
 		p := expandPath(w.prompt("Will configure in [$SIMPPATH/config]", w.configPath))
@@ -38,8 +48,8 @@ func wizard() {
 		if !w.confirm("%s already exists. ERASE?", w.configPath) {
 			w.abort()
 		}
-		// os.RemoveAll(w.configPath)
-		os.Mkdir(w.configPath, 0755)
+		os.RemoveAll(w.configPath)
+		os.MkdirAll(w.configPath, 0755)
 	} else {
 		os.MkdirAll(w.configPath, 0755)
 		if !alreadyExists(w.configPath) {
@@ -89,10 +99,12 @@ func wizard() {
 
 		var p config.Provider
 		switch driverName {
-		case "openai":
-			p = w.configureOpenAI()
 		case "anthropic", "gemini":
 			p = w.configureDriver(driverName)
+		case "openai":
+			p = w.configureOpenAI()
+		case "vertex":
+			p = w.configureVertex()
 		case "dify":
 			fmt.Println("TBA.")
 			continue
@@ -123,7 +135,7 @@ func wizard() {
 				break
 			}
 			if p.Driver == "dify" && len(p.Models) == 0 {
-				fmt.Println("Dify API currently requires that bearer token is set per model.")
+				fmt.Println("Dify API currently requires that Bearer token is set per model.")
 				if w.confirm("Abort Dify configuration?") {
 					stderr("Aborted.")
 					break
@@ -150,48 +162,8 @@ provided:
 	exit(0)
 }
 
-func wizardApikey() {
-	ringing := slices.ContainsFunc(cfg.Auth, func(a config.Auth) bool {
-		return a.Type == "keyring"
-	})
-	if !ringing {
-		stderr("Please configure keyring first, or simply put it in the config!")
-		exit(1)
-	}
-
-	var w wizardState
-	fmt.Println("Available drivers:", driver.ListString())
-	d := w.prompt("Driver", "")
-	if !slices.Contains(driver.Drivers, d) {
-		stderr("Driver does not exist:", d)
-		exit(1)
-	}
-	provider := w.prompt("Provider name", "")
-	for _, p := range cfg.Providers {
-		if p.Driver != d || p.Name != provider {
-			continue
-		}
-		ring, err := keyringFor(p, cfg)
-		if err != nil {
-			stderr("Keyring error:", err)
-			exit(1)
-		}
-		p.APIKey = w.apikey()
-		err = ring.Set(keyring.Item{Key: "apikey", Data: []byte(p.APIKey)})
-		if err != nil {
-			stderr("Keyring write error:", err)
-			exit(1)
-		}
-		fmt.Println("Done")
-		return
-	}
-	stderr("Provider not found")
-	exit(1)
-}
-
 func (w *wizardState) configureKeyring() {
 	fmt.Println("How would you like to store your secrets such as API keys?")
-	fmt.Println("\tconfig (not recommended)")
 	backends := keyring.AvailableBackends()
 	for _, backend := range backends {
 		fmt.Printf("\t%s\n", backend)
@@ -199,9 +171,6 @@ func (w *wizardState) configureKeyring() {
 	var backend keyring.BackendType = backends[0]
 	for {
 		backend = keyring.BackendType(w.prompt("Store keys in", string(backend)))
-		if backend == "config" {
-			break
-		}
 		if !slices.Contains(backends, backend) {
 			fmt.Println("Unsupported backend")
 			continue
@@ -251,10 +220,44 @@ func (w *wizardState) configureOpenAI() (p config.Provider) {
 	if p.BaseURL == openaiBaseURL {
 		p.BaseURL = ""
 	}
-	p.Name = w.prompt("Provider name", w.defaultProviderName("openai"))
-	p.APIKey = w.apikey()
-	if p.BaseURL == "" {
-		return
+	for p.Name == "" {
+		p.Name = w.prompt("Provider name", w.defaultProviderName("openai"))
+	}
+	for p.APIKey == "" {
+		p.APIKey = w.apikey()
+	}
+	return
+}
+
+func (w *wizardState) configureVertex() (p config.Provider) {
+	p.Driver = "vertex"
+	p.Name = w.prompt("Provider name", w.defaultProviderName("vertex"))
+	fmt.Println("Vertex AI requires Project ID, Region, and JSON credentials in base64.")
+	for p.Project == "" {
+		p.Project = w.prompt("Project", "")
+	}
+	p.Region = w.prompt("Region", "")
+	for {
+		p.APIKey = w.apikey()
+		_, err := base64.StdEncoding.DecodeString(p.APIKey)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		break
+	}
+	if w.confirm("Would you like to use Batch API?") {
+		fmt.Println("Batch Prediction API requires configuring a BigQuery dataset and a bucket.")
+		if !w.confirm("Continue?") {
+			return
+		}
+		for p.Dataset == "" {
+			p.Dataset = w.prompt("Dataset", "")
+		}
+		for p.Bucket == "" {
+			p.Bucket = w.prompt("Bucket", "")
+		}
+		p.Batch = true
 	}
 	return
 }
@@ -262,7 +265,9 @@ func (w *wizardState) configureOpenAI() (p config.Provider) {
 func (w *wizardState) configureDriver(driver string) (p config.Provider) {
 	p.Driver = driver
 	p.APIKey = w.apikey()
-	p.Name = w.defaultProviderName(driver)
+	for p.Name == "" {
+		p.Name = w.defaultProviderName(driver)
+	}
 	return
 }
 
@@ -432,6 +437,52 @@ func (w *wizardState) configureHistory() {
 			AnnotateWith: model,
 		}
 		return
+	}
+}
+
+func (w *wizardState) configureApikeys() {
+	if err := setup(); err != nil {
+		stderr(err)
+		exit(1)
+	}
+	for {
+	again:
+		fmt.Println("Available drivers:", driver.ListString())
+		var drv string
+		for drv == "" {
+			drv = w.prompt("Driver", "")
+			if !slices.Contains(driver.Drivers, drv) {
+				continue
+			}
+		}
+		var prv string
+		for prv == "" {
+			prv = w.prompt("Provider name", "")
+		}
+		for _, p := range cfg.Providers {
+			if p.Driver != drv || p.Name != prv {
+				continue
+			}
+			ring, err := keyringFor(p, cfg)
+			if err != nil {
+				stderr("Keyring error:", err)
+				exit(1)
+			}
+			for p.APIKey == "" {
+				p.APIKey = w.apikey()
+			}
+			err = ring.Set(keyring.Item{Key: "apikey", Data: []byte(p.APIKey)})
+			if err != nil {
+				stderr("Keyring write error:", err)
+				exit(1)
+			}
+			fmt.Println("Done")
+			if w.confirm("Add another API key?") {
+				goto again
+			}
+			return
+		}
+		stderr("Provider not found")
 	}
 }
 

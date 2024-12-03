@@ -25,7 +25,6 @@ import (
 var (
 	// diff             = flag.Bool("diff", false, "if configured, diff from instructions")
 	configure        = flag.Bool("configure", false, "interactive configuration wizard")
-	apikey           = flag.Bool("apikey", false, "configure provider apikey in keyring")
 	daemon           = flag.Bool("daemon", false, "run as daemon")
 	vim              = flag.Bool("vim", false, "vim mode")
 	historypath      = flag.Bool("historypath", false, "display history path per current location")
@@ -50,20 +49,27 @@ var (
 type stimulus chan struct{}
 
 func main() {
+	log.SetLevel(log.LevelInfo)
+
 	wave() // the flags
-	conflicts := mutuallyExclusive("configure", "apikey", "daemon", "historypath", "i")
+
+	conflicts := mutuallyExclusive(
+		"configure",
+		"daemon",
+		"historypath",
+		"i",
+	)
+	if conflicts != nil {
+		stderr("mutually exclusive flags:", strings.Join(conflicts, ", "))
+		exit(1)
+	}
+
 	if err := setup(); err != nil {
 		stderr("simp:", err)
 		exit(1)
 	}
-	log.SetLevel(log.LevelInfo)
+
 	switch {
-	case conflicts != nil:
-		stderr("mutually exclusive flags:", strings.Join(conflicts, ", "))
-		exit(1)
-	case *apikey:
-		wizardApikey()
-		return
 	case *historypath:
 		fmt.Println(anthology)
 		return
@@ -78,12 +84,6 @@ func main() {
 		}
 		defer w.Close()
 		w.Add(path.Join(simp.Path, "config"))
-
-		// open the database
-		if err := books.Open(path.Join(simp.Path, "books.db3")); err != nil {
-			stderr("failed to open books:", err)
-			exit(1)
-		}
 
 		reload := make(stimulus)
 		go func() {
@@ -102,6 +102,7 @@ func main() {
 				case <-reload:
 					log.Info("config changed, reloading")
 					cfg.ClearCache()
+					auth.ClearCache()
 				case <-sig:
 					return
 				}
@@ -144,7 +145,7 @@ func wave() {
 	flag.Parse()
 	if *configure {
 		wizard()
-		return
+		exit(1)
 	}
 	// positional control flags
 	for k, arg := range flag.Args() {
@@ -191,23 +192,32 @@ func setup() error {
 		return err
 	}
 	cfg = c
+
 	if model == "" {
 		if cfg.Default.Model == "" {
 			return errors.New("no default model")
 		}
 		model = cfg.Default.Model
 	}
+
 	// get working directory
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
+
 	// winning path for history
 	anthology = history(cfg.History, wd)
 	if anthology != "" {
 		if err := os.MkdirAll(anthology, 0755); err != nil {
 			return fmt.Errorf("history path %s per working directory: %w", anthology, err)
 		}
+	}
+
+	// open the database
+	if err := books.Open(path.Join(simp.Path, "books.db3")); err != nil {
+		stderr("failed to open books:", err)
+		exit(1)
 	}
 	return nil
 }

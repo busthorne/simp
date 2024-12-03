@@ -15,7 +15,7 @@ import (
 
 func (w *wizardState) abort() {
 	fmt.Println("Aborted.")
-	os.Exit(1)
+	exit(1)
 }
 
 func (w *wizardState) confirm(prompt string, formatValues ...any) bool {

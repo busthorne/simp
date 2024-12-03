@@ -1,10 +1,5 @@
 default {
 	model = "{{ .Default.Model }}"
-	# max_tokens =
-	# temperature =
-	# top_p =
-	# frequency_penalty =
-	# presence_penalty =
 }
 
 {{ if .Daemon }}
@@ -15,13 +10,9 @@ daemon {
 	{{- if .Daemon.ListenAddr }}
 	listen_addr = "{{ .Daemon.ListenAddr }}"
 	{{- end }}
-	# allowed_ips = [""]
-	# auto_tls = false
-	# keyring = { keyring to store SSL cert and key }
 }
 {{- end }}
 
-{{ if .Auth }}
 {{- range .Auth }}
 auth "{{ .Type }}" "{{ .Name }}" {
 	backend = "{{ .Backend }}"
@@ -54,7 +45,6 @@ auth "{{ .Type }}" "{{ .Name }}" {
 	{{- end }}
 }
 {{- end }}
-{{- end }}
 
 {{ if .Providers }}
 {{- range .Providers }}
@@ -62,9 +52,22 @@ provider "{{ .Driver }}" "{{ .Name }}" {
 	{{- if .BaseURL }}
 	base_url = "{{ .BaseURL }}"
 	{{- end }}
-	{{- if .APIKey }}
-	apikey = "{{ .APIKey }}"
+	{{- if .Batch }}
+	batch = true
 	{{- end }}
+	{{- if .Project }}
+	project = "{{ .Project }}"
+	{{- end }}
+	{{- if .Region }}
+	region = "{{ .Region }}"
+	{{- end }}
+	{{- if .Dataset }}
+	dataset = "{{ .Dataset }}"
+	{{- end }}
+	{{- if .Bucket }}
+	bucket = "{{ .Bucket }}"
+	{{- end }}
+
 	{{- range .Models }}
 	model "{{ .Name }}" {
 		{{- if .Alias }}

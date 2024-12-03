@@ -1,110 +1,175 @@
 package auth
 
 import (
-	"strings"
+	"context"
+	"crypto/cipher"
+	"crypto/rand"
+	"errors"
+	"fmt"
 
+	"filippo.io/xaes256gcm"
 	"github.com/busthorne/keyring"
+	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/books"
 	"github.com/busthorne/simp/config"
 )
 
-var rings = map[string]keyring.Keyring{}
+var (
+	rings        = map[string]Keyring{}
+	keyringCache = map[string]keyring.Item{}
+)
+
+func ClearCache() {
+	keyringCache = map[string]keyring.Item{}
+}
 
 // NewKeyring opens a keyring for a given provider.
 //
 // The providers are only able to access their own keys, so as not to risk
 // conflicts between providers.
 func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, error) {
-	id := "simp_" + auth.Name
-	ring, ok := rings[id]
-	if !ok {
-		r, err := keyring.Open(keyring.Config{
-			AllowedBackends:                []keyring.BackendType{keyring.BackendType(auth.Backend)},
-			ServiceName:                    "simp_" + auth.Name,
-			KeyCtlScope:                    "user",
-			KeychainAccessibleWhenUnlocked: true,
-			KeychainTrustApplication:       true,
-			KeychainSynchronizable:         auth.KeychainSynchronizable,
-			FileDir:                        auth.FileDir,
-			KWalletAppID:                   auth.KWalletAppID,
-			KWalletFolder:                  auth.KWalletFolder,
-			LibSecretCollectionName:        auth.LibSecretCollectionName,
-			PassDir:                        auth.PassDir,
-			PassCmd:                        auth.PassCmd,
-		})
-		if err != nil {
+	namespace := ""
+	if provider != nil {
+		namespace = provider.Driver + "." + provider.Name
+	}
+	if r, ok := rings[auth.Name]; ok {
+		r.namespace = namespace
+		return &r, nil
+	}
+	ring, err := keyring.Open(keyring.Config{
+		AllowedBackends:                []keyring.BackendType{keyring.BackendType(auth.Backend)},
+		ServiceName:                    "simp",
+		KeyCtlScope:                    "user",
+		KeychainAccessibleWhenUnlocked: true,
+		KeychainTrustApplication:       true,
+		KeychainSynchronizable:         auth.KeychainSynchronizable,
+		FileDir:                        auth.FileDir,
+		KWalletAppID:                   auth.KWalletAppID,
+		KWalletFolder:                  auth.KWalletFolder,
+		LibSecretCollectionName:        auth.LibSecretCollectionName,
+		PassDir:                        auth.PassDir,
+		PassCmd:                        auth.PassCmd,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open keyring %s: %w", auth.Name, err)
+	}
+	const masterKey = "master_key"
+	secretItem, err := ring.Get(masterKey)
+	switch err {
+	case nil:
+	case keyring.ErrKeyNotFound:
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
 			return nil, err
 		}
-		ring = r
-		rings[id] = r
+		secretItem = keyring.Item{
+			Key:  masterKey,
+			Data: secret,
+		}
+		if err := ring.Set(secretItem); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("failed read master key from %q keyring: %w", auth.Name, err)
 	}
-	k := &Keyring{ring, "", make(keyringCache)}
-	if provider != nil {
-		k.prefix = provider.Driver + "/" + provider.Name + "/"
+	aead, err := xaes256gcm.NewWithManualNonces(secretItem.Data)
+	if err != nil {
+		return nil, err
 	}
-	return k, nil
+	k := Keyring{auth.Name, namespace, aead}
+	rings[auth.Name] = k
+	return &k, nil
 }
-
-type keyringCache = map[string]keyring.Item
 
 // Keyring provides a per-provider view of a keyring.
 type Keyring struct {
-	ring   keyring.Keyring
-	prefix string
-
-	cache keyringCache
+	ring      string
+	namespace string
+	aead      cipher.AEAD
 }
 
-func (k *Keyring) rewrite(key string) string {
-	return strings.TrimPrefix(key, k.prefix)
-}
-
-func (k *Keyring) Get(key string) (keyring.Item, error) {
-	if item, ok := k.cache[key]; ok {
+func (k *Keyring) Get(key string) (item keyring.Item, err error) {
+	if item, ok := keyringCache[k.ns(key)]; ok {
 		return item, nil
 	}
-	item, err := k.ring.Get(k.prefix + key)
+	cv, err := books.Session().KeyringGet(context.Background(), books.KeyringGetParams{
+		Ring: k.ring,
+		Ns:   k.namespace,
+		Key:  key,
+	})
 	if err != nil {
-		return keyring.Item{}, err
+		return item, err
 	}
-	item.Key = k.rewrite(item.Key)
-	k.cache[key] = item
+	item.Key = key
+	item.Data, err = k.decrypt(cv)
+	if err != nil {
+		return item, err
+	}
+	keyringCache[k.ns(key)] = item
 	return item, nil
 }
 
 func (k *Keyring) GetMetadata(key string) (keyring.Metadata, error) {
-	meta, err := k.ring.GetMetadata(k.prefix + key)
-	if err != nil {
-		return keyring.Metadata{}, err
-	}
-	meta.Key = k.rewrite(meta.Key)
-	return meta, nil
+	return keyring.Metadata{}, simp.ErrNotImplemented
 }
 
 func (k *Keyring) Set(item keyring.Item) error {
-	item.Key = k.prefix + item.Key
-	err := k.ring.Set(item)
+	v, err := k.encrypt(item.Data)
 	if err != nil {
 		return err
 	}
-	k.cache[item.Key] = item
+	err = books.Session().KeyringSet(context.Background(), books.KeyringSetParams{
+		Ring:  k.ring,
+		Ns:    k.namespace,
+		Key:   item.Key,
+		Value: v,
+	})
+	if err != nil {
+		return err
+	}
+	keyringCache[k.ns(item.Key)] = item
 	return nil
 }
 
 func (k *Keyring) Remove(key string) error {
-	delete(k.cache, key)
-	return k.ring.Remove(k.prefix + key)
+	delete(keyringCache, k.ns(key))
+	return books.Session().KeyringDelete(context.Background(), books.KeyringDeleteParams{
+		Ring: k.ring,
+		Ns:   k.namespace,
+		Key:  key,
+	})
 }
 
 func (k *Keyring) Keys() ([]string, error) {
-	real, err := k.ring.Keys()
-	if err != nil {
+	return books.Session().KeyringList(context.Background(), books.KeyringListParams{
+		Ring: k.ring,
+		Ns:   k.namespace,
+	})
+}
+
+func (k *Keyring) ns(key string) string {
+	return k.namespace + "/" + key
+}
+
+func (k *Keyring) encrypt(plaintext []byte) ([]byte, error) {
+	if k.aead == nil {
+		return nil, errors.New("encryption key is not set")
+	}
+	nonce := make([]byte, 24)
+	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	keys := []string{}
-	for _, key := range real {
-		if strings.HasPrefix(key, k.prefix) {
-			keys = append(keys, k.rewrite(key))
-		}
+	seal := k.aead.Seal(nil, nonce, plaintext, nil)
+	return append(nonce, seal...), nil
+}
+
+func (k *Keyring) decrypt(ciphertext []byte) ([]byte, error) {
+	if k.aead == nil {
+		return nil, errors.New("encryption key is not set")
 	}
-	return keys, nil
+	if len(ciphertext) < 24 {
+		return nil, errors.New("bad ciphertext")
+	}
+	nonce, seal := ciphertext[:24], ciphertext[24:]
+	return k.aead.Open(nil, nonce, seal, nil)
 }

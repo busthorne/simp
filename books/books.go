@@ -15,7 +15,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const Epoch = 1
+const Epoch = 2
 
 var DB *sql.DB
 
@@ -25,6 +25,8 @@ var migrations embed.FS
 func Open(sqlite string) error {
 	if DB == nil {
 		sqlite_vec.Auto()
+	} else {
+		DB.Close()
 	}
 	db, err := sql.Open("sqlite3", sqlite)
 	if err != nil {

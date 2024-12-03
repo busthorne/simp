@@ -34,6 +34,14 @@ type BatchOp struct {
 	CanceledAt  *time.Time         `db:"canceled_at" json:"canceled_at"`
 }
 
+type Keyring struct {
+	Ring      string    `db:"ring" json:"ring"`
+	Ns        string    `db:"ns" json:"ns"`
+	Key       string    `db:"key" json:"key"`
+	Value     []byte    `db:"value" json:"value"`
+	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+}
+
 type Migration struct {
 	Epoch int64 `db:"epoch" json:"epoch"`
 }
