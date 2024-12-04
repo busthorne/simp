@@ -11,7 +11,7 @@ There's also `simp -daemon` which is, like, a whole API gateway thing; it suppor
 
 Simp uses the configured keychain by default, however in the future I'll be adding compartmentation, and SSO via Cloudflare, JWT, OIDC, you name it; it also follows OpenAI's [Batch API][2] in provider-agnostic manner, & default to normal endpoints if some provider won't support it.
 
-The tool is designed ergonomically so that you could bring it to shell scripts.
+The tool is designed with ergonomics in mind.
 
 ```bash
 git clone --recursive https://github.com/busthorne/simp
@@ -24,64 +24,105 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 ```
 
 ## Features
-- [x] Read from stdin, complete to stdout
-- [x] Setup wizard `-configure`
+- [x] [Cables](#cable-format)
+	- [ ] Polycables
 - [x] Drivers
 	- [x] OpenAI
 	- [x] Anthropic
 	- [x] Gemini
 	- [x] Vertex
 	- [ ] Bedrock
-	- [x] [Dify][10]
-- [x] Keychains
-- [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format
+	- [ ] [Dify][10]
+		- [ ] [Conversations](#dify)
+- [x] Interactive mode
 - [x] [Daemon mode](#daemon)
-	- [x] OpenAI-compatible API gateway
+	- [x] OpenAI-compatible API
 	- [x] [Universal Batch API](#batch-api)
-		- [x] [Vertex](#vertex)
 		- [x] OpenAI
 		- [x] Anthropic
+		- [x] [Vertex](#vertex)
 	- [ ] SSO
-- [x] Interactive mode
 - [x] [Vim mode][1]
+- [x] Wizard
+- [x] Keyring
+	- [x] KWallet
+	- [x] GNOME Keyring
+	- [x] Pass
+	- [x] macOS Keychain
+	- [x] wincred
+	- [x] libsecret
+	- [x] keyctl
+	- [x] file
 - [x] [History](#history)
-	- [x] Group by path parts
+	- [x] Grouping
 	- [x] Ignore
 	- [x] [Annotations](#annotations)
 - [ ] Tools
+	- [ ] [RAG](#rag)
 	- [ ] CLI
 	- [ ] Universal function-calling semantics
 	- [ ] Diff mode
 	- [ ] Vim integration
-- [ ] [RAG](#rag)
-- [ ] CI, regressions, & cross-compiled CD
 
 ## Cable format
-Simp includes a special-purpose plaintext cable format for chat conversations.
+I'd designed a special-purpose plaintext _cable_ format to support interactive chats and histories.
 
-The CLI tool accepts user input via stdin, and it will try to parse it using the cable format. The parser is clever: if the input would appear as cable format, however not well-formed, it will err. Otherwise, it will simply treat the entirety of input as the user message. The image URL's and Markdown image items are treated as images by default.
-
-In Vim mode, `simp` will always terminate output with a trailing prompt marker.
-
-```
+```cable
 You are helpful assistant.
 
 	>>>
-Tell a joke
-
-	<<< 4o
-Chicken crossed the road.
-
-	>>>
-You can switch models mid-conversation!
+Tell a joke.
 
 	<<< cs35
-Chicken crossed the road a second time.
+Chicken crossed the road.
 ```
 
-The idea is that the format is simple enough for it to be used in a notepad application, or shell; because it's not a structured data format, chat completions may be read from stdin and immediately appended to prompt, or concatenated with a buffer of some kind. This also means that the cable format is easy to integrate. Take a look at [vim-simp][1] it's a really simple program all things considered.
+Even though `simp` accepts non-cable input, it will always try to parse the cable first. The parser is clever to avoid ambiguity: if it deems the input a malformed cable, it will err explicitly. Keep in mind that non-cable input is treated as a single user message; optionally, the system message is populated from `-system` argument. The cable format uses tabular `>>>` and `<<<` guidelines to indicate user and assistant messages respectively. If there's text preceding the first `>>>` prompt, it's considered a system message.
 
-All your conversations are just plaintext files that you can [ripgrep][3] and [fzf][4] over.
+The guidelines would sometimes contain metadata. For example, `<<< alias` indicates what model (or the shortest configured alias thereof) was used to produce the message, and conversely `>>> alias` is how you would _explictly_ switch the model mid-conversation. The metadata is not mandatory, however it also helps a lot to keep track of who's who; in interactive mode, `simp` will use the last explictly prompted model for subsequent completions.
+
+If a given user message contains png, jpeg, gif, or webp links, `simp` would will rewrite to structure it as multipart.
+
+The idea is that the format is simple enough for it to be used in a notepad application, and shell alike; because it's not a structured data format, shell scripts could multi-turn by appending chat completions to prompts, or maintain some buffer, if necessary. This also means that the cable format could be easily integrated with the editor of your choice. Take a look at [vim-simp][1] which is a _really_ simple program all things considered.
+
+### Polycables
+If you wish to compare multiple models at the same time, or maintain multiple alternate versions of the same chat, you should try _polycables_. The plaintext medium restricts the space of possible solutions for this problem. As far as readability is concerned, and indeed for `simp` it is the case, guidelines must remain visually aligned. I'm sure some will like it, and some would hate it, but it's my design so I make the call: the guidelines are modified to indicate the alternate number, so a continuation `<<<` becomes `<1<` for the first, `<2<` for the second alternate, and so on.
+
+In the chat below, the default model is used in the beginning as the model was not explicitly prompted. The user would then request three alternates, and decide to continue with the third alternate, albeit with a different model. If they used `>>>` like you would normally do, all three alternates would have continued further using the respective models. However, had they also prompted `>>> model` then all three alternates would have continued using `model`.
+
+```cable
+You are helpful assistant.
+
+	>>>
+Write a one-sentence setup for a joke.
+
+	<<< 4o
+A soldier, scientist, and politican walk into a bar.
+
+	>>> cs35,4o,flash
+Write a punchline.
+
+	<1< cs35
+The bartender says "What is this, some kind of international crisis?"
+
+	<2< 4o
+The bartender looks up and says, "Is this a strategy meeting or just another round of 'whose job is harder'?"
+
+	<3< flash
+...and the bartender says, "What is this, some kind of joke?"
+
+	>3> pro
+Write this joke in Ukrainian verbatim.
+
+	<3<
+Солдат, вчений та політик заходять у бар... і бармен каже: "Що це, якийсь жарт?"
+```
+
+In Vim mode, `simp` will always terminate output with a trailing prompt marker.
+
+Polycables gather in parallel, so the first alternate is streamed until completion, then whatever was generated in the second alternate up to that point is echoed at once, streaming the rest until completion, and so on. Interactive mode does not allow re-writing past messages due to limitations of the terminal, however in [vim-simp][1] it's possible, and indeed really valuable.
+
+Revisiting past cables later, and partially rewriting it with new context is very powerful; see [History](#history) to learn how you could use `simp` to preserve, and catalogue past cables, as well as using [ripgrep][3] and [fzf][4] to navigate them efficiently. In future releases `simp -daemon` will support some form of [RAG](#rag) books, courtesy of [sqlite-vec][6] extensions, in terms of [tool-use](#tools). The tool support will be cables-first. The functions and [GBNF][19] grammars could be read from the system message; see my [PR][20] in Ollama for reference, while the scope of RAG (files, collections of files, i.e. _codebase_ search) parsed from guideline metadata.
 
 ## Daemon
 ```bash
@@ -97,15 +138,20 @@ In particular, I'd always wanted a proxy that could do [Batch API][2], too.
 Currently, simp in both CLI and daemon mode only tracks the models that have been explictly defined, however this is about to change soon with all the state-keeping changes; some providers have list endpoints, others don't but it's really killing latency to poll for model list to route providers... This is why some kind of per-provider list cache is needed, and while I'm at it, I thought I might do state properly. Well, at least it reload during run-time on config changes so you may introduce new changes without having to restart the whole thing. However, this may not necessarily be the case if involving some keychains.
 
 ### RAG
-I've been quite impressed with [Cursor][7] recently, and in particular it's diff and codebase search features. This is something that is missing from my Vim workflow, and if I were to replicate it, I would be very happy. This was the primary motivator, in fact, behind the daemon. (The other is having a provider-agnostic batching proxy.)
-
-Now again, there's many RAG providers, vector databases, and whatnot. Even though I may support _some_ of them in the future (but probably just [pgvector][8] and [pgvecto.rs][9] which is what I use) through a generic configuration interface, Simp is currently using [sqlite-vec][6] so that's where RAG will go when it eventually lands master.
+I've been quite impressed with [Cursor][7] recently, and in particular it's diff and codebase search features. This is something that is missing from my Vim workflow, and if I were to replicate it, I would be very happy. This was the primary motivator, in fact, behind the daemon. (The other is having a provider-agnostic batching proxy.) Now again, there's many RAG providers, vector databases, and whatnot. Even though I may support _some_ of them in the future (but probably just [pgvector][8] and [pgvecto.rs][9] which is what I use) through a generic configuration interface, Simp is currently using [sqlite-vec][6] so that's where RAG will go when it eventually lands master.
 
 I'm not sure I like the "index all" that is not in `.cursorignore` approach, though.
 
-The final implementation will be determined by the strength and limitations of Vim, but I think it would be straightforward to port it to Visual Studio Code, too, and somebody had already suggested they might do it, so I'll keep that in mind. With RAG enabled, I would be adding more code-aware metadata to the cable format: so that diff's could be resolved transparently, and buffers aggregated for context. Good news is this year I'd learnt how to do chunk code up, progressively summarise it, and arrange it in something more reasonable than a vector heap, and that also requires a proper database.
+The final implementation will be determined by the strength and limitations of Vim, but I think it would be straightforward to port it to Visual Studio Code, too, and somebody had already suggested they might do it, so I'll keep that in mind. With RAG enabled, I would be adding more code-aware metadata to the cable format: so that diff's could be resolved transparently, and buffers aggregated for context. Good news is this year I'd learnt how to do chunk code up, progressively summarise it, and arrange it in something more reasonable than a vector heap, and that also requires a proper database. There's not necessarily Postgres to help me here, but I'm quite confident I will get there with SQLite.
 
-There's not necessarily Postgres to help me here, but I'm quite confident I will get there with SQLite.
+### Dify
+[Dify][10] is a source-available SaaS based on [React Flow][21] which is similar to Langflow, Flowise, but IMHO much better.
+
+I'm amazed how despite shitty code, it proves increasingly versatile time and time again. Analysts at [Busthorne][22] use it quite extensively as it doesn't really require programming background. For example, we have multiple SQL knowledge bases and agents that are able to write, execute, & analyse the results of SQL queries. Most important of all, it uses Postgres for everything, so I'm also able to query the KB's, and use [pgvecto.rs][9] indexing, too. We have built out extensive language-games infrastructure based on Dify.
+
+There's value in proxying Dify agents like `simp` does with the inference drivers, however the API doesn't allow arbitrary conversations. The chatflows in Dify have hidden state that they're able to modify, so the conversations cannot be created out of the blue. Thankfully, `simp` has SQLite book-keeping now, so we might figure out something out; editing the conversations table in Postgres directly under Dify's nose is also on the table.
+
+The driver implementation is there but it's not exactly ready for consumption.
 
 ### Configuration
 Simp tools will use `$SIMPPATH` that is set to `$HOME/.simp` by default.
@@ -264,11 +310,9 @@ I guess you might see now why I'd gone with [HCL][5].
 ## Tools
 Tool-use is most exciting: I really hate how the major providers are doing it, & unfortunately there's limitations to what you can accomplish without control of the inference-time. Therefore, `simp` will likely only support model-in-the-loop tools with grammar sampling and K/V backtracking capabilities.
 
-**Key idea**: whereas you did round-trip endpoints per-call, you would have one, long model-in-the-loop inference. For example: see [AICI][12] by Microsoft for inspiration on how this could be done. So whenever the model makes a call, you parse it mid-completion, pause, go back to a K/V checkpoint before the call, and re-write with the result, carry on. The traditional API like OpenAI's—would lead you to believe that for a single chat completion with N sequential function-calls, N+1 round-trip inferences are necessary.
+**Key idea** is whereas you did round-trip endpoints per-call, you would have one, long model-in-the-loop inference; see [AICI][12] by Microsoft for inspiration on how this could be done. So whenever the model makes a call, you parse it mid-completion, pause, go back to a K/V checkpoint before the call, and re-write with the result, carry on. The traditional API like OpenAI's—would lead you to believe that for a single chat completion with N sequential function-calls, N+1 round-trip inferences are necessary.
 
-However, this is only the case because your chat context has to go through the API line multiple times. If you retained control of the context window during inference, you could match its output grammatically in realtime! This is even more powerful when considering the parallel function-calling capability. The backtracking will reduce, or hide latency from network calls completely. Moreover, everything here lends to batching nicely: compute reasoning steps for parallel-calls from the same position in K/V cache. Also known as predictive branching.
-
-Have a reward model assign scores to reasoning, too; congratulations, your sampler implements [MCTS][14] with a RL reward function.
+However, this is only the case because your chat context has to go through the API line multiple times. If you retained control of the context window during inference, you could match its output grammatically in realtime! This is even more powerful when considering the parallel function-calling capability. The backtracking will reduce, or hide latency from network calls completely. Moreover, everything here lends to batching nicely: compute reasoning steps for parallel-calls from the same position in K/V cache. Also known as predictive branching. Have a reward model assign scores to reasoning, too; congratulations, your sampler implements [MCTS][14] with an actual reward function.
 
 I don't have a clear implementation strategy for tool-use in simp, but it would have to tick the following boxes:
 
@@ -276,7 +320,7 @@ I don't have a clear implementation strategy for tool-use in simp, but it would 
 	- [ ] OpenAPI specs from JSON/YAML definitions
 	- [ ] Agents as tools
 	- [ ] Interruptible work
-	- [ ] [Grammars][20]
+	- [ ] [Grammars][19]
 	- [ ] WebAssembly-like controller API, see [AICI][12]?
 - [ ] CLI semantics
 	- [ ] Prerequisite: diff mode for fixing calls, editing code, etc.
@@ -306,5 +350,7 @@ MIT
 [16]: https://jina.ai/news/jina-embeddings-v3-a-frontier-multilingual-embedding-model/#parameter-latechunking
 [17]: https://github.com/busthorne/go-openai
 [18]: https://github.com/sashabaranov/go-openai
-[19]: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#parts
-[20]: https://github.com/ggerganov/llama.cpp/blob/master/grammars/README.md
+[19]: https://github.com/ggerganov/llama.cpp/blob/master/grammars/README.md
+[20]: https://github.com/ollama/ollama/pull/7513
+[21]: https://reactflow.dev/
+[22]: https://github.com/busthorne
