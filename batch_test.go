@@ -1,4 +1,4 @@
-package books
+package simp
 
 import (
 	"bytes"
@@ -11,10 +11,10 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-//go:embed testdata/input.jsonl
+//go:embed testdata/batch_inputs.jsonl
 var inputJSONL []byte
 
-//go:embed testdata/output.jsonl
+//go:embed testdata/batch_outputs.jsonl
 var outputJSONL []byte
 
 func TestBatchInput(t *testing.T) {
