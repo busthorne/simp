@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -32,12 +31,14 @@ func promptComplete() error {
 	var prompt string
 	switch {
 	case *interactive:
-		// read until newline
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			prompt = scanner.Text()
-		} else {
-			return fmt.Errorf("failed to read input: %v", scanner.Err())
+		s, err := multiline()
+		switch err {
+		case nil:
+			prompt = s
+		case io.EOF:
+			return io.EOF
+		default:
+			return err
 		}
 	default:
 		// read prompt

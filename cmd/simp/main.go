@@ -131,6 +131,10 @@ func main() {
 		}
 	}
 	defer saveHistory()
+
+	if *interactive {
+		stderr(interactiveHelp)
+	}
 	for {
 		switch err := promptComplete(); err {
 		case nil:
