@@ -285,13 +285,22 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 	if err != nil {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
-	err = client.
+	inserter := client.
 		Dataset(v.Dataset).
 		Table(table).
-		Inserter().
-		Put(ctx, rows)
-	if err != nil {
-		return fmt.Errorf("failed to insert batch: %w", err)
+		Inserter()
+
+	const chunkSize = 1000
+	for i := 0; i < len(rows); i += chunkSize {
+		end := i + chunkSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[i:end]
+
+		if err := inserter.Put(ctx, chunk); err != nil {
+			return fmt.Errorf("failed to insert batch chunk: %w", err)
+		}
 	}
 	batch.InputFileID = table
 	return nil
@@ -456,10 +465,15 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 		}
 		output := &openai.ChatCompletionResponse{ID: row.ID}
 		for _, can := range resp.Candidates {
+			s := ""
+			parts := can.Content.Parts
+			if len(parts) != 0 {
+				s = parts[0].Text
+			}
 			c := openai.ChatCompletionChoice{
 				Message: openai.ChatCompletionMessage{
 					Role:    "assistant",
-					Content: can.Content.Parts[0].Text,
+					Content: s,
 				},
 			}
 			output.Choices = append(output.Choices, c)

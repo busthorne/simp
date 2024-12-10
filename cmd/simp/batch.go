@@ -27,6 +27,14 @@ func notkeep(err error, format string, args ...any) error {
 	return fmt.Errorf("%w: %s: %v", simp.ErrBookkeeping, fmt.Sprintf(format, args...), err)
 }
 
+// NOTE: both OpenAI and Vertex allow 50K batches, however at 200 MB limit (OpenAI)
+//
+//	there's only 4 KB on average which only corresponds to anywhere from
+//	1000 to 2000 tokens per completion which is far too little
+//
+// TODO: this should probably implement adaptive, provider-aware splitting, but hey
+const realBatchSize = 25000
+
 func BatchUpload(c *fiber.Ctx) error {
 	ctx := c.Context()
 
@@ -94,8 +102,7 @@ func BatchUpload(c *fiber.Ctx) error {
 		}
 		models[model] = m
 		// cache the batch driver variant
-		if _, ok := drivers[model]; !ok {
-			bd, _ := d.(simp.BatchDriver)
+		if bd, ok := d.(simp.BatchDriver); ok {
 			drivers[model] = bd
 		}
 		// contextual validation
@@ -175,41 +182,52 @@ eof:
 			parent = super
 			bd, ok = drivers[model]
 		)
+		const chunkSize = realBatchSize
 		if ok {
-			b := openai.Batch{
-				ID:       uuid.New().String(),
-				Endpoint: inputs[0].URL,
-				RequestCounts: openai.BatchRequestCounts{
-					Total: len(inputs),
-				},
-				Metadata: map[string]any{},
-			}
-			ctx := context.WithValue(ctx, simp.KeyModel, models[model])
-			switch err := bd.BatchUpload(ctx, &b, inputs); err {
-			case simp.ErrNotImplemented:
-				// i.e. openai-compatible providers that do not support batching
-				implicit = true
-			case simp.ErrBatchDeferred:
-				// i.e. anthropic which doesn't require an upload
-				b.Metadata["deferred"] = true
-				deferred = true
-				parent = b
-				fallthrough
-			case nil:
-				err := book.InsertBatch(ctx, books.InsertBatchParams{
-					ID:    b.ID,
-					Super: &super.ID,
-					Model: model,
-					Body:  b,
-				})
-				if err != nil {
-					return notkeep(err, "create batch")
+			splits := make([][]openai.BatchInput, 0, len(inputs)/chunkSize+1)
+			for i := 0; i < len(inputs); i += chunkSize {
+				end := i + chunkSize
+				if end > len(inputs) {
+					end = len(inputs)
 				}
-			default:
-				return fmt.Errorf("batch upload failed for model %q: %w", model, err)
+				splits = append(splits, inputs[i:end])
+			}
+			for _, inputs := range splits {
+				b := openai.Batch{
+					ID:       uuid.New().String(),
+					Endpoint: inputs[0].URL,
+					RequestCounts: openai.BatchRequestCounts{
+						Total: len(inputs),
+					},
+					Metadata: map[string]any{},
+				}
+				ctx := context.WithValue(ctx, simp.KeyModel, models[model])
+				switch err := bd.BatchUpload(ctx, &b, inputs); err {
+				case simp.ErrNotImplemented:
+					// i.e. openai-compatible providers that do not support batching
+					implicit = true
+				case simp.ErrBatchDeferred:
+					// i.e. anthropic which doesn't require an upload
+					b.Metadata["deferred"] = true
+					deferred = true
+					parent = b
+					fallthrough
+				case nil:
+					err := book.InsertBatch(ctx, books.InsertBatchParams{
+						ID:    b.ID,
+						Super: &super.ID,
+						Model: model,
+						Body:  b,
+					})
+					if err != nil {
+						return notkeep(err, "create batch")
+					}
+				default:
+					return fmt.Errorf("batch upload failed for model %q: %w", model, err)
+				}
 			}
 		}
-		if !(deferred || implicit) {
+		if !deferred && !implicit {
 			continue
 		}
 		// create implicit and deferred batch ops
@@ -389,18 +407,24 @@ func BatchRefresh(c *fiber.Ctx) error {
 func BatchReceive(c *fiber.Ctx) error {
 	ctx := c.Context()
 	book := books.Session()
-	sid := c.Params("id")
-	subs, err := book.SubBatchesCompleted(ctx, &sid)
+	superid := c.Params("id")
+	subs, err := book.SubBatchesCompleted(ctx, &superid)
 	if err != nil {
 		return fmt.Errorf("batch not found: %w", err)
 	}
 	c.Set("Content-Type", "application/jsonl")
 	w := json.NewEncoder(c.Response().BodyWriter())
+
+	drivers := map[string]simp.BatchDriver{}
 	for _, sub := range subs {
 		batch := sub.Body
-		bd, _, err := findBaldo(sub.Model)
-		if err != nil {
-			continue
+		bd, ok := drivers[sub.Model]
+		if !ok {
+			d, _, err := findBaldo(sub.Model)
+			if err != nil {
+				continue
+			}
+			bd = d
 		}
 		outputs, err := bd.BatchReceive(ctx, &batch)
 		if err != nil {
@@ -411,14 +435,29 @@ func BatchReceive(c *fiber.Ctx) error {
 			w.Encode(output)
 		}
 	}
-	outputs, err := book.BatchOpsCompleted(ctx, sid)
-	if err != nil {
-		return fmt.Errorf("batch not found: %w", err)
+
+	const chunkSize = realBatchSize
+
+	for i := int64(0); ; i += chunkSize {
+		outputs, err := book.BatchOpsCompleted(ctx, books.BatchOpsCompletedParams{
+			Batch:  superid,
+			Limit:  chunkSize,
+			Offset: i,
+		})
+		switch err {
+		case nil:
+			if len(outputs) == 0 {
+				return nil
+			}
+			for _, output := range outputs {
+				w.Encode(output)
+			}
+		case sql.ErrNoRows:
+			return nil
+		default:
+			return fmt.Errorf("batch not found: %w", err)
+		}
 	}
-	for _, output := range outputs {
-		w.Encode(output)
-	}
-	return nil
 }
 
 func BatchCancel(c *fiber.Ctx) error {

@@ -62,11 +62,20 @@ func (q *Queries) BatchOps(ctx context.Context, batch string) ([]openai.BatchInp
 }
 
 const batchOpsCompleted = `-- name: BatchOpsCompleted :many
-select response from batch_op where batch = ? and completed_at is not null
+select response
+from batch_op
+where batch = ? and completed_at is not null
+limit ? offset ?
 `
 
-func (q *Queries) BatchOpsCompleted(ctx context.Context, batch string) ([]openai.BatchOutput, error) {
-	rows, err := q.db.QueryContext(ctx, batchOpsCompleted, batch)
+type BatchOpsCompletedParams struct {
+	Batch  string `db:"batch" json:"batch"`
+	Limit  int64  `db:"limit" json:"limit"`
+	Offset int64  `db:"offset" json:"offset"`
+}
+
+func (q *Queries) BatchOpsCompleted(ctx context.Context, arg BatchOpsCompletedParams) ([]openai.BatchOutput, error) {
+	rows, err := q.db.QueryContext(ctx, batchOpsCompleted, arg.Batch, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}

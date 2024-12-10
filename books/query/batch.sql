@@ -40,7 +40,10 @@ from batch_op
 -- name: DeleteBatchOps :exec
 delete from batch_op where batch = ?;
 -- name: BatchOpsCompleted :many
-select response from batch_op where batch = ? and completed_at is not null;
+select response
+from batch_op
+where batch = ? and completed_at is not null
+limit @limit offset @offset;
 
 -- name: UpdateBatch :exec
 update batch

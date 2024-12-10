@@ -23,6 +23,9 @@ func listen() *fiber.App {
 
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
+		BodyLimit:             10 << 27, // 1.34 GB
+		ReadBufferSize:        10 << 10, // 10 KB
+		WriteBufferSize:       10 << 12, // 40 KB
 	})
 	f.Use(cors.New())
 	f.Use(func(c *fiber.Ctx) (err error) {
