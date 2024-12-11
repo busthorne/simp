@@ -65,7 +65,7 @@ func BatchUpload(c *fiber.Ctx) error {
 		// ids
 		ids = map[string]bool{}
 	)
-	for i := 1; ; i++ {
+	for i := 0; ; i++ {
 		var input openai.BatchInput
 
 		// a bit of a courtesy handler
@@ -94,7 +94,6 @@ func BatchUpload(c *fiber.Ctx) error {
 		default:
 			return malformed(err)
 		}
-
 		model := input.Model()
 		d, m, err := findWaldo(model)
 		if err != nil {

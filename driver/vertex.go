@@ -2,13 +2,20 @@ package driver
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"path/filepath"
+	"strings"
 
 	aipl "cloud.google.com/go/aiplatform/apiv1"
 	aipb "cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
 	"cloud.google.com/go/bigquery"
+	"cloud.google.com/go/storage"
 	"cloud.google.com/go/vertexai/genai"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
@@ -24,12 +31,15 @@ func NewVertex(p config.Provider) (*Vertex, error) {
 	if len(b) > 0 {
 		p.APIKey = string(b)
 	}
-	return &Vertex{p}, nil
+	return &Vertex{Provider: p, uploads: map[string]string{}}, nil
 }
 
 // Vertex implements the driver interface using Google's Vertex AI API
 type Vertex struct {
 	config.Provider
+
+	storage *storage.Client
+	uploads map[string]string
 }
 
 func (v *Vertex) List(ctx context.Context) ([]openai.Model, error) {
@@ -147,18 +157,17 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 		role := msg.Role
 		switch role {
 		case "system":
-			if i == 0 {
-				model.SystemInstruction = &genai.Content{
-					Parts: []genai.Part{genai.Text(msg.Content)},
-				}
-				continue
+			if i != 0 {
+				return c, simp.ErrMisplacedSystem
 			}
-			return c, fmt.Errorf("system message is misplaced")
+			model.SystemInstruction = &genai.Content{
+				Parts: []genai.Part{genai.Text(msg.Content)},
+			}
 		case "user":
 		case "assistant":
 			role = "model"
 		default:
-			return c, fmt.Errorf("unsupported role: %q", role)
+			return c, simp.ErrUnsupportedRole
 		}
 		c := &genai.Content{
 			Role:  role,
@@ -259,17 +268,21 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		rows   = []vertexBatch{}
 		models = map[string]bool{}
 	)
-	for _, i := range inputs {
-		if i.ChatCompletion == nil {
+	for i, input := range inputs {
+		if input.ChatCompletion == nil {
 			return fmt.Errorf("embeddings are not supported")
 		}
-		models[i.ChatCompletion.Model] = true
+		models[input.ChatCompletion.Model] = true
 		if len(models) > 1 {
 			return fmt.Errorf("all completions must use the same model")
 		}
+		req, err := v.marshal(ctx, input.ChatCompletion)
+		if err != nil {
+			return fmt.Errorf("message/%d could not be marshaled: %w", i, err)
+		}
 		rows = append(rows, vertexBatch{
-			ID:      i.CustomID,
-			Request: v.serializeRequest(i.ChatCompletion),
+			ID:      input.CustomID,
+			Request: req,
 		})
 	}
 	err = client.
@@ -291,12 +304,12 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		Inserter()
 
 	const chunkSize = 1000
-	for i := 0; i < len(rows); i += chunkSize {
-		end := i + chunkSize
+	for input := 0; input < len(rows); input += chunkSize {
+		end := input + chunkSize
 		if end > len(rows) {
 			end = len(rows)
 		}
-		chunk := rows[i:end]
+		chunk := rows[input:end]
 
 		if err := inserter.Put(ctx, chunk); err != nil {
 			return fmt.Errorf("failed to insert batch chunk: %w", err)
@@ -407,47 +420,62 @@ func (v *Vertex) BatchRefresh(ctx context.Context, batch *openai.Batch) error {
 	return nil
 }
 
+// VertexP is a message content part.
+type VertexP struct {
+	Text string   `json:"text,omitempty"`
+	File *VertexF `json:"fileData,omitempty"`
+}
+
+type VertexF struct {
+	FileUri  string `json:"fileUri,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+}
+
+// VertexC is a message content.
+type VertexC struct {
+	Role  string    `json:"role,omitempty"`
+	Parts []VertexP `json:"parts"`
+}
+
 func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs []openai.BatchOutput, err error) {
 	client, err := v.bigqueryClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer client.Close()
+	if batch.Status == openai.BatchStatusCompleted {
+		// NOTE: predict-UUID will contain the requests for posterity
+		defer client.
+			Dataset(v.Dataset).
+			Table(batch.InputFileID).
+			Delete(ctx)
+	}
 
-	type Row struct {
-		ID       string `bigquery:"custom_id"`
-		Response string `bigquery:"response"`
-	}
-	type Parts struct {
-		Text     string `json:"text,omitempty"`
-		FileUri  string `json:"fileUri,omitempty"`
-		MimeType string `json:"mimeType,omitempty"`
-	}
-	type Content struct {
-		Role  string  `json:"role"`
-		Parts []Parts `json:"parts"`
-	}
 	type Candidates struct {
 		AvgLogprobs  float64 `json:"avgLogprobs"`
-		Content      Content `json:"content"`
+		Content      VertexC `json:"content"`
 		FinishReason string  `json:"finishReason"`
 	}
-	type UsageMetadata struct {
+	type Usage struct {
 		CandidatesTokenCount int `json:"candidatesTokenCount"`
 		PromptTokenCount     int `json:"promptTokenCount"`
 		TotalTokenCount      int `json:"totalTokenCount"`
 	}
 	type Response struct {
-		Candidates    []Candidates  `json:"candidates"`
-		ModelVersion  string        `json:"modelVersion"`
-		UsageMetadata UsageMetadata `json:"usageMetadata"`
+		Candidates    []Candidates `json:"candidates"`
+		ModelVersion  string       `json:"modelVersion"`
+		UsageMetadata Usage        `json:"usageMetadata"`
 	}
+	table := "predict-" + batch.InputFileID
 	it := client.
 		Dataset(v.Dataset).
-		Table("predict-" + batch.InputFileID).
+		Table(table).
 		Read(ctx)
 	for {
-		var row Row
+		var row struct {
+			ID       string `bigquery:"custom_id"`
+			Response string `bigquery:"response"`
+		}
 		err := it.Next(&row)
 		switch err {
 		case nil:
@@ -457,7 +485,7 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 		case iterator.Done:
 			return outputs, nil
 		default:
-			return nil, fmt.Errorf("cannot read from table: %w", err)
+			return nil, fmt.Errorf("cannot read from table %q: %w", table, err)
 		}
 		var resp Response
 		if err := json.Unmarshal([]byte(row.Response), &resp); err != nil {
@@ -466,8 +494,7 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 		output := &openai.ChatCompletionResponse{ID: row.ID}
 		for _, can := range resp.Candidates {
 			s := ""
-			parts := can.Content.Parts
-			if len(parts) != 0 {
+			if parts := can.Content.Parts; len(parts) != 0 {
 				s = parts[0].Text
 			}
 			c := openai.ChatCompletionChoice{
@@ -475,6 +502,10 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 					Role:    "assistant",
 					Content: s,
 				},
+				LogProbs: &openai.LogProbs{
+					Content: []openai.LogProb{{Token: "average", LogProb: can.AvgLogprobs}},
+				},
+				FinishReason: openai.FinishReason(can.FinishReason),
 			}
 			output.Choices = append(output.Choices, c)
 		}
@@ -502,41 +533,131 @@ func (v *Vertex) BatchCancel(ctx context.Context, batch *openai.Batch) error {
 	return client.CancelBatchPredictionJob(ctx, req)
 }
 
-func (v *Vertex) serializeRequest(a *openai.ChatCompletionRequest) string {
-	type textPart struct {
-		Text string `json:"text"`
-	}
-	type content struct {
-		Role  string     `json:"role,omitempty"`
-		Parts []textPart `json:"parts"`
-	}
-
+func (v *Vertex) marshal(ctx context.Context, a *openai.ChatCompletionRequest) (string, error) {
 	req := map[string]any{}
-	contents := make([]content, 0, len(a.Messages))
-	for _, msg := range a.Messages {
-		role := msg.Role
+	contents := make([]VertexC, 0, len(a.Messages))
+	for i, msg := range a.Messages {
+		var (
+			c    VertexC
+			role = msg.Role
+			mp   = msg.MultiContent
+		)
+		if len(mp) == 0 {
+			if msg.Content == "" {
+				return "", fmt.Errorf("empty message/%d", i)
+			}
+			mp = append(mp, openai.ChatMessagePart{Type: "text", Text: msg.Content})
+		}
+		for j, p := range mp {
+			switch p.Type {
+			case openai.ChatMessagePartTypeText:
+				c.Parts = append(c.Parts, VertexP{Text: p.Text})
+			case openai.ChatMessagePartTypeImageURL:
+				if p.ImageURL == nil || p.ImageURL.URL == "" {
+					return "", fmt.Errorf("no fileUri present in message/%d part/%d", i, j)
+				}
+				gs, mime, err := v.fileUpload(ctx, p.ImageURL.URL)
+				if err != nil {
+					return "", fmt.Errorf("upload message/%d part/%d: %w", i, j, err)
+				}
+				c.Parts = append(c.Parts, VertexP{File: &VertexF{FileUri: gs, MimeType: mime}})
+			default:
+				return "", fmt.Errorf("message/%d part/%d: %w", i, j, simp.ErrUnsupportedInput)
+			}
+		}
 		switch role {
 		case "system":
-			req["system_instruction"] = content{
-				Parts: []textPart{{Text: msg.Content}},
+			if i != 0 {
+				return "", fmt.Errorf("message/%d: %w", i, simp.ErrMisplacedSystem)
 			}
+			req["system_instruction"] = c
 			continue
 		case "user":
 		case "assistant":
 			role = "model"
+		default:
+			return "", fmt.Errorf("message/%d: %w", i, simp.ErrUnsupportedRole)
 		}
-		content := content{
-			Role:  role,
-			Parts: []textPart{{Text: msg.Content}},
-		}
-		contents = append(contents, content)
+		c.Role = role
+		contents = append(contents, c)
 	}
 	req["contents"] = contents
+
 	b, err := json.Marshal(req)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
-	return string(b)
+	return string(b), nil
+}
+
+func (v *Vertex) fileUpload(ctx context.Context, fileUri string) (gs, mime string, ret error) {
+	var ext string
+	switch ext = strings.ToLower(filepath.Ext(fileUri)); ext {
+	case ".pdf":
+		mime = "application/pdf"
+	case ".mp3", ".wav", ".mpeg":
+		mime = "audio/" + ext
+	case ".jpg", ".jpeg":
+		mime = "image/jpeg"
+	case ".webp", ".png":
+		mime = "image/" + ext
+	case ".mov", ".mp4", ".mpg", ".avi", ".wmv", ".mpegps", ".flv":
+		mime = "video/" + ext
+	default:
+		mime = "text/plain"
+	}
+	if strings.HasPrefix(fileUri, "gs://") {
+		return fileUri, mime, nil
+	}
+	if s, ok := v.uploads[fileUri]; ok {
+		return s, mime, ret
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", fileUri, nil)
+	if err != nil {
+		return gs, mime, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return gs, mime, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return gs, mime, err
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		mime = ct
+	}
+
+	h := sha256.New()
+	h.Write(b)
+	digest := hex.EncodeToString(h.Sum(nil))
+
+	client, err := v.storageClient(ctx)
+	if err != nil {
+		return gs, mime, err
+	}
+
+	if ext != "" {
+		ext = "." + ext
+	}
+	obj := client.Bucket(v.Bucket).Object(digest + ext)
+	switch _, err := obj.Attrs(ctx); err {
+	case storage.ErrObjectNotExist:
+		writer := obj.NewWriter(ctx)
+		if _, err := writer.Write(b); err != nil {
+			return gs, mime, err
+		}
+		if err := writer.Close(); err != nil {
+			return gs, mime, err
+		}
+	default:
+		return gs, mime, err
+	}
+	gs = "gs://" + v.Bucket + "/" + obj.ObjectName()
+	v.uploads[fileUri] = gs
+	return gs, mime, nil
 }
 
 func (v *Vertex) updateStatus(batch *openai.Batch, state aipb.JobState) {
@@ -596,6 +717,18 @@ func (v *Vertex) bigqueryClient(ctx context.Context) (*bigquery.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot make bigquery client: %w", err)
 	}
+	return client, nil
+}
+
+func (v *Vertex) storageClient(ctx context.Context) (*storage.Client, error) {
+	if v.storage != nil {
+		return v.storage, nil
+	}
+	client, err := storage.NewClient(ctx, v.credentials())
+	if err != nil {
+		return nil, fmt.Errorf("cannot make storage client: %w", err)
+	}
+	v.storage = client
 	return client, nil
 }
 

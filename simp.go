@@ -20,6 +20,8 @@ var (
 	ErrUnsupportedRole = errors.New("role is not supported")
 	// ErrNotFound is returned when a model or alias is not found.
 	ErrNotFound = errors.New("model or alias is not found")
+	// ErrMisplacedSystem
+	ErrMisplacedSystem = errors.New("system message is misplaced")
 	// ErrBatchIncomplete is returned when a batch is not completed.
 	ErrBatchIncomplete = errors.New("batch is incomplete")
 	// ErrBatchDeferred is returned when the provider must defer a batch until send time.
