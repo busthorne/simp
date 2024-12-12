@@ -29,6 +29,7 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 	- [x] Anthropic
 	- [x] Gemini
 	- [x] Vertex
+	- [ ] Bedrock
 	- [x] [Dify][10]
 - [x] Keychains
 - [x] [Cables](#cable-format): multi-player, model-independent plaintext chat format
@@ -38,7 +39,6 @@ echo 'Tell a joke.' | simp 4o 0.5 200 1 0 0
 		- [x] [Vertex](#vertex)
 		- [x] OpenAI
 		- [x] Anthropic
-		- [ ] The others
 	- [ ] SSO
 - [x] Interactive mode
 - [x] [Vim mode][1]
@@ -119,22 +119,20 @@ default {
 }
 
 daemon {
-	listen_addr = "127.0.0.1:51015"
+	listen_addr = "0.0.0.0:51015"
 	allowed_ips = ["10.0.0.0/8"]
+
+	# or
+	daemon_addr = "http://server-on-the-network.lan:51015"
 }
 
-# use macOS system keychain
 auth "keyring" "default" {
-	backend = "keychain"
-	keychain_icloud = true
+	backend = "keychain" # use macOS system keychain
 }
 
 provider "openai" "api" {
 	model "gpt-4o" {
 		alias = ["4o"]
-	}
-	model "gpt-4o-mini" {
-		alias = ["4om"]
 	}
 	model "o1-preview" {
 		alias = ["o1"]
@@ -143,11 +141,10 @@ provider "openai" "api" {
 
 provider "vertex" "api" {
 	project = "simp"
-	region = "europe-north1"
-	bucket = "simpmedia"
+	region  = "europe-north1"
+	bucket  = "simpmedia"
 	dataset = "simpbatches"
-	# Batch Prediction API uses a BigQuery dataset which must be created beforehand.
-	batch = true
+	batch   = true
 
 	model "gemini-1.5-flash-002" {
 		alias = ["flash"]
@@ -158,10 +155,9 @@ provider "vertex" "api" {
 }
 
 provider "anthropic" "api" {
-	# -latest is not necessary; the gateway will assume and rewrite accordingly
 	model "claude-3-5-sonnet" {
 		alias = ["cs35"]
-		latest = true
+		latest = true # simp will append -latest on the wire
 	}
 	model "claude-3-5-haiku" {
 		alias = ["ch35"]
@@ -180,13 +176,12 @@ provider "openai" "ollama" {
 	}
 	model "gemma-2-27b-it" {
 		alias = ["g27"]
-		tags = ["q4_0"]
-		context_length = 8192
-		max_tokens = 4096
 	}
 }
 
 history {
+	annotate_with = "ch35"
+
 	# group histories from all projects by project name
 	path "~/projects/*/**" {
 		group = "*"
@@ -195,7 +190,6 @@ history {
 	path "~/projects/simp" {
 		ignore = true
 	}
-	annotate_with = "ch35" # see. claude-3-5-haiku
 }
 ```
 
@@ -209,56 +203,41 @@ Since `simp -daemon` has to translate batch formats regardless, it allows batche
 > If you work with text datasets as much as I do, my money is you would find this behaviour as _liberating_ at least as much as I do. Although you should note that the implementation is quite complex, so there may be bugs. I have done end-to-end testing, and dogfood eat everyday, but I cannot guarantee that your big batch won't go bust!
 
 #### Vertex
-Note that Vertex AI's [Batch API][15] requires a BigQuery dataset for communicating back the results. Well, there's the bucket option, however it's really messy to match `custom_id` from the responses, as they're out-of-order, and that would make it really complicated to handle. Therefore, by default Batch API is disabled for Vertex providers, see [Configuration](#configuration) for example configuration that covers all bases.
+[Batch API][15] in Google's Vertex AI requires a BigQuery dataset for communicating back the results. Well, there's the bucket option, however it's really messy to match `custom_id` from the responses, as they're out-of-order, and that would make it really complicated to handle. Therefore, by default Batch API is disabled for Vertex providers, see [Configuration](#configuration) for example configuration that covers all.
 
-#### Use case
+The following Gemini models support multimodal [fileData][19] inputs:
+* gemini-1.5-flash-002
+* gemini-1.5-flash-001
+* gemini-1.5-pro-002
+* gemini-1.5-pro-001
 
-I will soon be show-casing the [pg_bluerose][11] extension that brings LLM primitives to Postgres.
+OpenAI API only offers `text` and `image_url` parts for the time being, so that's what Simp is using. However, the actual URL under `image_url` could be a text/plain, application/pdf, image, audio, or video files.
 
-```sql
--- load a Hugginface dataset without ever writing it to disk (courtesy of pg_analytics)
-create foreign table hf.ukr_pravda_2y () server parquet options (
-    files 'hf://datasets/shamotskyi/ukr_pravda_2y/parquet/default/train/*.parquet'
-);
-
-create or replace view ukr_pravda_2y as
-    select
-        -- unique id (required)
-        art_id as id,
-        chat('system', 'Paraphrase for audience of political scientists.',
-             'user', ukr_text) as q,
-        null::chatcompletion as a, -- placeholder
-        complete(
-            model => 'flash',
-            temperature => 0.5) as a_,
-        null::vector(1024) as v, -- placeholder
-        embed(model => 'jina-embedding-v3') as v_,
-        -- inference time tally: usage, errors, etc.
-        tally(),
-        -- later: joined from foreign table
-        d.*
-    from hf.ukr_pravda_2y as d;
-select complete_all('ukr_pravda_2y', batch => true);
-
--- later: query only what's been completed so far
-select id, q, a, v from urk_pravda_2y where v is not null;
-
--- later: token spending
-select
-    id,
-    total(tally,
-        usd_per_input,
-        usd_per_output) / 2 as usd -- discount
-from ukr_pravda_2y
-join bluerose.model_cost on model = tally->>'model';
+```json
+{
+	"contents": [{
+			"role": "user",
+			"parts": [
+				{"text": "What is the relation between the following video and image samples?"},
+				{"fileData": {
+					"fileUri": "gs://cloud-samples-data/generative-ai/video/animals.mp4",
+					"mimeType": "video/mp4"
+				}},
+				{"fileData": {
+					"fileUri": "gs://cloud-samples-data/generative-ai/image/cricket.jpeg",
+					"mimeType": "image/jpeg"
+				}}
+			]
+	}]
+}
 ```
 
-This is the kind of use-case `simp -daemon` is meant to enable: make a view from nothing, `complete_all` and the completions are just there.
+Vertex mandates that `fileUri` is a Cloud Storage path, so unless the URL starts with `gs://` Simp will download the file, infer its `mimeType` from either Content-Type, or the file extension, and write it down to the configured bucket under SHA256 content-addressible filename.
 
 ## History
 This is perhaps the biggest upgrade since the olden days of `simp` when—trivia—it was still called `gpt`.
 
-The history option is basically making sure your cables are not evaporating when you want them to be remembered, cherished, and otherwise organised—this is why we have `$SIMPPATH/history` folder. By default, all simp cables are stored there. You can control how they're grouped in the config: by specifying paths and grouping expressions, which will be used to catalogue the cables appropriately. Unfortunately, it's all relative to history directory now. Absolute paths will be added at some point. 
+The history option is basically making sure your cables are not evaporating when you want them to be remembered, cherished, and otherwise organised—this is why we have `$SIMPPATH/history` folder. By default, all simp cables are stored there. You can control how they're grouped in the config: by specifying paths and grouping expressions, which will be used to catalogue the cables appropriately. Unfortunately, it's all relative to history directory now. Absolute paths will be added at some point.
 
 Note that you may use wildcards.
 
@@ -291,17 +270,17 @@ Have a reward model assign scores to reasoning, too; congratulations, your sampl
 
 I don't have a clear implementation strategy for tool-use in simp, but it would have to tick the following boxes:
 
-- [ ] Tools are well-defined [HCL][5] configs
-	- [ ] Shell command-tools a-la `echo 'do my k8s deployments' | simp -agent k8s -context ../infra`
-	- [ ] OpenAPI specs imported from JSON/YAML
-	- [ ] Virtual tools: models-as-tools, tool context delegations
-- [ ] All tools produce grammar inputs to [DAG][13] sampler
-- [ ] CLI semantics as ergonomic as possible
-	- [ ] Prerequisite: diff mode for fixing calls, editing code, etc. 
+- [ ] Tools are well-defined [HCL][5]
+	- [ ] OpenAPI specs from JSON/YAML definitions
+	- [ ] Agents as tools
+	- [ ] Interruptible work
+	- [ ] [Grammars][20]
+	- [ ] WebAssembly-like controller API, see [AICI][12]?
+- [ ] CLI semantics
+	- [ ] Prerequisite: diff mode for fixing calls, editing code, etc.
 	- [ ] Shell command-tools require `[y/n]` consent
 	- [ ] Vim mode support
-- [ ] API semantics a-la OpenAI, provider-agnostic compatibility
-- [ ] Bluerose semantics: Postgres functions meet transactions, meet sampler.
+- [ ] API semantics
 
 ## License
 MIT
@@ -325,3 +304,5 @@ MIT
 [16]: https://jina.ai/news/jina-embeddings-v3-a-frontier-multilingual-embedding-model/#parameter-latechunking
 [17]: https://github.com/busthorne/go-openai
 [18]: https://github.com/sashabaranov/go-openai
+[19]: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#parts
+[20]: https://github.com/ggerganov/llama.cpp/blob/master/grammars/README.md
