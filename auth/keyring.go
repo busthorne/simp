@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 
@@ -55,16 +56,21 @@ func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, e
 	}
 	const masterKey = "master_key"
 	secretItem, err := ring.Get(masterKey)
+	secret := make([]byte, 32)
 	switch err {
 	case nil:
+		b, _ := base64.StdEncoding.DecodeString(string(secretItem.Data))
+		if len(b) != 32 {
+			return nil, fmt.Errorf("invalid master key for keyring %q", auth.Name)
+		}
+		secret = b
 	case keyring.ErrKeyNotFound:
-		secret := make([]byte, 32)
 		if _, err := rand.Read(secret); err != nil {
 			return nil, err
 		}
 		secretItem = keyring.Item{
 			Key:  masterKey,
-			Data: secret,
+			Data: []byte(base64.StdEncoding.EncodeToString(secret)),
 		}
 		if err := ring.Set(secretItem); err != nil {
 			return nil, err
@@ -72,7 +78,7 @@ func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, e
 	default:
 		return nil, fmt.Errorf("failed read master key from %q keyring: %w", auth.Name, err)
 	}
-	aead, err := xaes256gcm.NewWithManualNonces(secretItem.Data)
+	aead, err := xaes256gcm.NewWithManualNonces(secret)
 	if err != nil {
 		return nil, err
 	}
