@@ -24,6 +24,10 @@ type wizardState struct {
 
 func wizard() {
 	w := &wizardState{
+		Config: config.Config{
+			Default: &config.Default{},
+		},
+
 		reader:     bufio.NewReader(os.Stdin),
 		configPath: path.Join(simp.Path, "config"),
 	}
@@ -149,7 +153,13 @@ func wizard() {
 	}
 provided:
 	w.printProviders()
-	w.Default.Model = w.prompt("Default model or alias", "")
+	suggest := []string{}
+	for _, p := range w.Providers {
+		for _, m := range p.Models {
+			suggest = append(suggest, m.Alias...)
+		}
+	}
+	w.Default.Model = w.prompt("Default model or alias", strings.Join(suggest, "|"))
 	if w.confirm("Would you like to retain conversation histories?") {
 		w.configureHistory()
 	}

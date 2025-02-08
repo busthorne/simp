@@ -9,7 +9,7 @@ import (
 	"github.com/busthorne/simp"
 )
 
-var Drivers = []string{"openai", "anthropic", "gemini", "dify", "vertex"}
+var Drivers = []string{"openai", "anthropic", "gemini", "vertex"}
 
 func ListString() string {
 	return strings.Join(Drivers, ", ")

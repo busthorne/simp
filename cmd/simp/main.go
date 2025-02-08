@@ -30,6 +30,8 @@ var (
 	historypath      = flag.Bool("historypath", false, "display history path per current location")
 	interactive      = flag.Bool("i", false, "interactive mode")
 	verbose          = flag.Bool("v", false, "verbose output")
+	debug            = flag.Bool("vv", false, "very verbose (debug) output")
+	tracing          = flag.Bool("vvv", false, "very, very verbose (trace) output")
 	nos              = flag.Bool("nos", false, "disable streaming")
 	lessThan         = flag.Int("lt", 0, "less than this many tokens")
 	temperature      = flag.Float64("t", 0, "temperature")
@@ -75,7 +77,13 @@ func main() {
 		return
 	case *daemon:
 		if *verbose {
+			log.SetLevel(log.LevelInfo)
+		}
+		if *debug {
 			log.SetLevel(log.LevelDebug)
+		}
+		if *tracing {
+			log.SetLevel(log.LevelTrace)
 		}
 		w, err := fsnotify.NewWatcher()
 		if err != nil {
