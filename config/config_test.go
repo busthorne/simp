@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/hashicorp/hcl/v2"
 )
 
 func TestParsePath(t *testing.T) {
@@ -15,7 +16,49 @@ func TestParsePath(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	want := Config{}
+	type list = []string
+	want := Config{
+		Default: &Default{
+			Model: "r1",
+		},
+		Daemon: &Daemon{
+			ListenAddr: "localhost:8080",
+			AutoTLS:    true,
+			AllowedIPs: list{"127.0.0.1/32", "10.0.0.0/8"},
+		},
+		Auth: []Auth{
+			{
+				Type:    "openai",
+				Name:    "api",
+				Backend: "api",
+			},
+		},
+		Providers: []Provider{
+			{
+				Driver: "openai",
+				Name:   "api",
+				Models: []Model{
+					{Name: "gpt-4o", Alias: list{"4o"}},
+					{Name: "o3-mini", Alias: list{"o3"}, Reasoning: true},
+				},
+			},
+			{
+				Driver: "openai",
+				Name:   "jina",
+				Models: []Model{
+					{Name: "jina-clip-v2", Alias: list{"jc2"}, Embedding: true, Images: true},
+				},
+			},
+		},
+		History: &History{
+			Location: "history",
+			Paths: []HistoryPath{
+				{Path: "/", Group: "root"},
+			},
+		},
+
+		Diagnostics: make(map[string]hcl.Diagnostics),
+	}
 	b, err := Configure("simp", want)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +75,7 @@ func TestParsePath(t *testing.T) {
 		}
 		return
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
+	if diff := cmp.Diff(want, *got); diff != "" {
 		t.Errorf("-want +got\n%s", diff)
 	}
 }

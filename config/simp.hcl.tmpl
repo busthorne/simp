@@ -1,19 +1,32 @@
+{{ with .Default -}}
 default {
-	model = "{{ .Default.Model }}"
+	{{if .Model }} model = "{{ .Model }}" {{ end }}
 }
-
-{{ if .Daemon }}
+{{ end }}
+{{ with .Daemon -}}
 daemon {
-	{{- if .Daemon.DaemonAddr }}
-	daemon_addr = "{{ .Daemon.DaemonAddr }}"
+	{{- with .DaemonAddr }}
+	daemon_addr = "{{ . }}"
 	{{- end }}
-	{{- if .Daemon.ListenAddr }}
-	listen_addr = "{{ .Daemon.ListenAddr }}"
+	{{- with .ListenAddr }}
+	listen_addr = "{{ . }}"
+	{{- end }}
+	{{- with .AutoTLS }}
+	auto_tls = {{ . }}
+	{{- end }}
+	{{- with .Keyring }}
+	keyring = "{{ . }}"
+	{{- end }}
+	{{- if .AllowedIPs }}
+	allowed_ips = [
+		{{- range $i, $cidr := .AllowedIPs }}
+		"{{ $cidr }}",
+		{{- end }}
+	]
 	{{- end }}
 }
-{{- end }}
-
-{{- range .Auth }}
+{{ end }}
+{{ range .Auth -}}
 auth "{{ .Type }}" "{{ .Name }}" {
 	backend = "{{ .Backend }}"
 	{{- if .Default }}
@@ -45,9 +58,7 @@ auth "{{ .Type }}" "{{ .Name }}" {
 	{{- end }}
 }
 {{- end }}
-
-{{ if .Providers }}
-{{- range .Providers }}
+{{ range .Providers }}
 provider "{{ .Driver }}" "{{ .Name }}" {
 	{{- if .BaseURL }}
 	base_url = "{{ .BaseURL }}"
@@ -67,7 +78,6 @@ provider "{{ .Driver }}" "{{ .Name }}" {
 	{{- if .Bucket }}
 	bucket = "{{ .Bucket }}"
 	{{- end }}
-
 	{{- range .Models }}
 	model "{{ .Name }}" {
 		{{- if .Alias }}
@@ -82,18 +92,22 @@ provider "{{ .Driver }}" "{{ .Name }}" {
 		{{- if .Embedding }}
 		embedding = {{ .Embedding }}
 		{{- end }}
+		{{- if .Images }}
+		images = {{ .Images }}
+		{{- end }}
+		{{- if .Reasoning }}
+		reasoning = {{ .Reasoning }}
+		{{- end }}
 	}
 	{{- end }}
 }
 {{ end }}
-{{- end }}
-
-{{- if .History }}
+{{ with .History -}}
 history {
-	{{- if .History.Location }}
-	location = "{{ .History.Location }}"
+	{{- if .Location }}
+	location = "{{ .Location }}"
 	{{- end }}
-	{{- range .History.Paths }}
+	{{- range .Paths }}
 	path "{{ .Path }}" {
 		{{- if .Group }}
 		group = "{{ .Group }}"
@@ -103,8 +117,8 @@ history {
 		{{- end }}
 	}
 	{{- end }}
-	{{- if .History.AnnotateWith }}
-	annotate_with = "{{ .History.AnnotateWith }}"
+	{{- with .AnnotateWith }}
+	annotate_with = "{{ . }}"
 	{{- end }}
 }
 {{- end }}
