@@ -1,0 +1,26 @@
+linters:
+  enable-all: true
+  
+  # deprecated 
+  disable:
+    - deadcode
+    - exhaustivestruct
+    - golint
+    - ifshort
+    - interfacer
+    - maligned
+    - gomnd
+    - nosnakecase
+    - scopelint
+    - structcheck
+    - varcheck
+
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - errcheck
+      severity: warning
+    - linters:
+        - dupl
+      severity: info
