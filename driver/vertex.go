@@ -57,13 +57,11 @@ func (v *Vertex) List(ctx context.Context) ([]openai.Model, error) {
 
 func (v *Vertex) Embed(ctx context.Context, req openai.EmbeddingRequest) (e openai.EmbeddingResponse, ret error) {
 	var texts []string
-	switch input := req.Input.(type) {
-	case string:
-		texts = []string{input}
-	case []string:
-		texts = input
-	default:
-		return e, simp.ErrUnsupportedInput
+	for _, s := range req.Input {
+		if s.Text == "" {
+			return e, simp.ErrUnsupportedInput
+		}
+		texts = append(texts, s.Text)
 	}
 
 	client, err := v.predictionClient(ctx)
@@ -168,6 +166,9 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 			role = "model"
 		default:
 			return c, simp.ErrUnsupportedRole
+		}
+		if role == "system" {
+			continue
 		}
 		c := &genai.Content{
 			Role:  role,

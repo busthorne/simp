@@ -180,6 +180,7 @@ type Model struct {
 	Embedding     bool     `hcl:"embedding,optional"`
 	Images        bool     `hcl:"images,optional"`
 	Videos        bool     `hcl:"videos,optional"`
+	Reasoning     bool     `hcl:"reasoning,optional"`
 
 	ModelDefault
 }

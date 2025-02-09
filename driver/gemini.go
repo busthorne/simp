@@ -66,15 +66,11 @@ func (g *Gemini) Embed(ctx context.Context, req openai.EmbeddingRequest) (e open
 		model.TaskType = typ
 	}
 	batch := model.NewBatch()
-	switch input := req.Input.(type) {
-	case string:
-		batch.AddContent(genai.Text(input))
-	case []string:
-		for _, s := range input {
-			batch.AddContent(genai.Text(s))
+	for _, s := range req.Input {
+		if s.Text == "" {
+			return e, simp.ErrUnsupportedInput
 		}
-	default:
-		return e, simp.ErrUnsupportedInput
+		batch.AddContent(genai.Text(s.Text))
 	}
 	resp, err := model.BatchEmbedContents(ctx, batch)
 	if err != nil {
@@ -110,14 +106,14 @@ func (g *Gemini) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	// Convert the messages to Gemini format
 	for i, msg := range req.Messages {
 		var role string
-		switch msg.Role {
+		switch role = msg.Role; role {
 		case "system":
 			if i != 0 {
 				return c, fmt.Errorf("misplaced system message")
 			}
 			model.SystemInstruction = genai.NewUserContent(genai.Text(msg.Content))
+			continue
 		case "user":
-			role = "user"
 		case "assistant":
 			role = "model"
 		default:

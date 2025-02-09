@@ -86,7 +86,7 @@ func batch(t *testing.T) {
 			if m.Embedding {
 				input.Embedding = &openai.EmbeddingRequest{
 					Model: model,
-					Input: prompt,
+					Input: []openai.EmbeddingInput{{Text: prompt}},
 				}
 			} else {
 				input.ChatCompletion = &openai.ChatCompletionRequest{
