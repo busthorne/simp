@@ -17,9 +17,7 @@ import (
 )
 
 func listen() *fiber.App {
-	nop := func(c *fiber.Ctx) error {
-		return notImplemented(c)
-	}
+	nop := notImplemented
 
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -30,7 +28,7 @@ func listen() *fiber.App {
 	f.Use(cors.New())
 	f.Use(func(c *fiber.Ctx) (err error) {
 		if err = c.Next(); err == nil {
-			return
+			return nil
 		}
 		log.Errorf("%s %s %v\n", c.Method(), c.Path(), err)
 		if errors.Is(err, simp.ErrBookkeeping) {

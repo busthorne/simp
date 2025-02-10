@@ -116,13 +116,14 @@ func main() {
 				}
 				if f != nil {
 					if err := f.Shutdown(); err != nil {
-						log.Fatal(err)
+						log.Error("failed to shutdown:", err)
+						return
 					}
 					f = nil
 					log.Info("shutdown")
 				}
 				if err := setup(); err != nil {
-					stderr(err)
+					log.Error("failed to setup:", err)
 					continue
 				}
 				break
@@ -138,7 +139,7 @@ func main() {
 			os.Stdout.Close()
 			return
 		default:
-			stderr(err)
+			log.Error("failed to complete:", err)
 			exit(1)
 		}
 	}
