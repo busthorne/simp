@@ -6,6 +6,7 @@ linters:
   - godox
   - unconvert
   - errchkjson
+  - maintidx
   # TODO: need to re-think how we do error handling, really
   - errorlint
   - wastedassign
