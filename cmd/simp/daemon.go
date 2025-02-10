@@ -44,9 +44,8 @@ func listen() *fiber.App {
 		if un := errors.Unwrap(err); un != nil {
 			err = un
 		}
-		switch err := err.(type) {
-		case *openai.APIError:
-			errType = err.Type
+		if apiErr, ok := err.(*openai.APIError); ok {
+			errType = apiErr.Type
 		}
 		return c.JSON(fiber.Map{"error": fiber.Map{
 			"message": err.Error(),

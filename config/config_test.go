@@ -63,7 +63,7 @@ func TestParsePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = os.WriteFile(filepath.Join(dir, "simp.hcl"), b, 0644)
+	err = os.WriteFile(filepath.Join(dir, "simp.hcl"), b, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}

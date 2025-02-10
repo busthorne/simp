@@ -39,6 +39,7 @@ func (api *API) ChatMessagesStream(ctx context.Context, req *ChatMessageRequest)
 	if err != nil {
 		return nil, err
 	}
+	defer httpResp.Body.Close()
 
 	streamChannel := make(chan ChatMessageStreamChannelResponse)
 	go api.chatMessagesStreamHandle(ctx, httpResp, streamChannel)

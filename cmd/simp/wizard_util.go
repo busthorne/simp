@@ -57,7 +57,7 @@ func (w *wizardState) apikey() string {
 }
 
 func (w *wizardState) writeConfig() error {
-	if err := os.MkdirAll(w.configPath, 0755); err != nil {
+	if err := os.MkdirAll(w.configPath, 0600); err != nil {
 		return err
 	}
 	b, err := config.Configure("simp", w.Config)
@@ -66,7 +66,7 @@ func (w *wizardState) writeConfig() error {
 	}
 	fpath := filepath.Join(w.configPath, "simp.hcl")
 	fmt.Printf("-> %s\n", fpath)
-	return os.WriteFile(fpath, b, 0755)
+	return os.WriteFile(fpath, b, 0600)
 }
 
 func (w *wizardState) defaultProviderName(driver string) string {

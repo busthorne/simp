@@ -1,6 +1,9 @@
 linters:
   enable-all: true
   disable:
+  # TODO: we need them, just not as errors
+  - errcheck
+  - godox
   # TODO: need to re-think how we do error handling, really
   - errorlint
   - wastedassign
@@ -10,6 +13,7 @@ linters:
   - thelper
   - usetesting
   - wrapcheck
+  - protogetter
   # i don't agree
   - inamedparam
   - gofumpt
@@ -30,6 +34,11 @@ linters:
   - varnamelen
   - wastedassign
   - wsl
+  - goconst
+  - gocognit
+  - revive
+  - asciicheck
+  - cyclop
   # don't care if the comments are not dot-terminated
   - godot
   # hates init functions

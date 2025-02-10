@@ -40,6 +40,7 @@ func (d *Daemon) Ping() error {
 		},
 	}
 	resp, err := client.Get(d.baseUrl + "/ping")
+	defer resp.Body.Close()
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
 	}
