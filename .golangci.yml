@@ -4,6 +4,8 @@ linters:
   # TODO: we need them, just not as errors
   - errcheck
   - godox
+  - unconvert
+  - errchkjson
   # TODO: need to re-think how we do error handling, really
   - errorlint
   - wastedassign
@@ -39,6 +41,8 @@ linters:
   - revive
   - asciicheck
   - cyclop
+  - gocyclo
+  - stylecheck
   # don't care if the comments are not dot-terminated
   - godot
   # hates init functions

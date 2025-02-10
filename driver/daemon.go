@@ -39,11 +39,11 @@ func (d *Daemon) Ping() error {
 			DialContext: (&net.Dialer{Timeout: dialTimeout}).DialContext,
 		},
 	}
-	resp, err := client.Get(d.baseUrl + "/ping")
-	defer resp.Body.Close()
+	resp, err := client.Get(d.baseUrl + "/ping") //nolint:noctx
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("daemon: %s", resp.Status)
 	}
