@@ -11,6 +11,7 @@ linters:
   - errorlint
   - wastedassign
   # TODO: deserves investigation
+  - gomoddirectives
   - paralleltest
   - recvcheck
   - thelper
