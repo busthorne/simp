@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"embed"
-	_ "embed"
 	"fmt"
 	"sort"
 	"strconv"

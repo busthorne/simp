@@ -80,7 +80,7 @@ func ParsePath(path string) (*Config, error) {
 				}
 			}
 		}
-		err = fmt.Errorf("%d errors, %d warnings occured in %d files", errors, warnings, n)
+		err = fmt.Errorf("%d errors, %d warnings occurred in %d files", errors, warnings, n)
 	}
 	return c, err
 }

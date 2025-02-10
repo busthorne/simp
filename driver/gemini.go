@@ -97,7 +97,7 @@ func (g *Gemini) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	model := client.GenerativeModel(req.Model)
 	model.SetTemperature(req.Temperature)
 	if v := req.MaxTokens; v != 0 {
-		model.SetMaxOutputTokens(int32(v))
+		model.SetMaxOutputTokens(int32(v)) //nolint:gosec
 	}
 	if v := req.TopP; v != 0 {
 		model.TopP = &v

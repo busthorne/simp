@@ -509,7 +509,7 @@ Note that you may use wildcards.
 For example, you could group the cables produced in /opt/projects by top-level project directory name.
 In that case, you would use /opt/projects/*/**, and * in the group expression. If you had a project
 named "simp", all cables created in /opt/projects/simp would be saved under "simp/" in the history
-directory. Without the ** in the path expression, the the children would not be considered for
+directory. Without the ** in the path expression, the children would not be considered for
 grouping, however this is not the case for ignore: paths are ignored inclusively. The longest-prefix
 match wins; you may similarly configure to ignore certain paths for good.
 

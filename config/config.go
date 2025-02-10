@@ -44,7 +44,7 @@ func (c *Config) LookupModel(alias string) (m Model, p Provider, ok bool) {
 			if m.Name == alias || slices.Contains(m.Alias, alias) {
 				// TODO: extra setup needed at model lists
 				if m.Latest {
-					m.Name = m.Name + "-latest"
+					m.Name += "-latest"
 				}
 				lookupCache[alias] = lookupOk{Model: m, Provider: p}
 				return m, p, true

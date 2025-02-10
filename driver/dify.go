@@ -40,7 +40,7 @@ func (o *Dify) Complete(ctx context.Context, req openai.ChatCompletionRequest) (
 	// TODO: bearer
 	client := dify.NewClient(o.Provider.BaseURL, "bearer")
 	if req.Stream {
-		resp, err := client.Api().ChatMessagesStream(context.Background(), difyReq)
+		resp, err := client.Api().ChatMessagesStream(ctx, difyReq)
 		if err != nil {
 			return c, err
 		}
@@ -66,7 +66,7 @@ func (o *Dify) Complete(ctx context.Context, req openai.ChatCompletionRequest) (
 			}
 		}()
 	}
-	resp, err := client.Api().ChatMessages(context.Background(), difyReq)
+	resp, err := client.Api().ChatMessages(ctx, difyReq)
 	if err != nil {
 		return c, err
 	}

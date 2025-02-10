@@ -14,7 +14,9 @@ Simp uses the configured keychain by default, however in the future I'll be addi
 The tool is designed ergonomically so that you could bring it to shell scripts.
 
 ```bash
-go install github.com/busthorne/simp/cmd/simp@latest
+git clone --recursive https://github.com/busthorne/simp
+cd simp
+go install ./cmd/simp
 simp -configure
 echo 'Tell a joke.' | simp
 # gpt-4o [temperature, [max_length, [top_p, [frequency_penalty, [presence_penalty]]]]]

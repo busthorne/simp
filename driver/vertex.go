@@ -138,7 +138,7 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	model := client.GenerativeModel(req.Model)
 	model.SetTemperature(req.Temperature)
 	if v := req.MaxTokens; v != 0 {
-		model.SetMaxOutputTokens(int32(v))
+		model.SetMaxOutputTokens(int32(v)) //nolint:gosec
 	}
 	if v := req.TopP; v != 0 {
 		model.TopP = &v
@@ -408,9 +408,11 @@ func (v *Vertex) BatchRefresh(ctx context.Context, batch *openai.Batch) error {
 	}
 	defer client.Close()
 
-	req := aipb.GetBatchPredictionJobRequest{
-		Name: batch.Metadata["job"].(string),
+	jobName, ok := batch.Metadata["job"].(string)
+	if !ok {
+		return fmt.Errorf("job name not available in metadata: %v", batch.Metadata)
 	}
+	req := aipb.GetBatchPredictionJobRequest{Name: jobName}
 	job, err := client.GetBatchPredictionJob(ctx, &req)
 	if err != nil {
 		return fmt.Errorf("cannot get job: %w", err)
@@ -528,9 +530,11 @@ func (v *Vertex) BatchCancel(ctx context.Context, batch *openai.Batch) error {
 		return err
 	}
 	defer client.Close()
-	req := &aipb.CancelBatchPredictionJobRequest{
-		Name: batch.Metadata["job"].(string),
+	jobName, ok := batch.Metadata["job"].(string)
+	if !ok {
+		return fmt.Errorf("job name not available in metadata: %v", batch.Metadata)
 	}
+	req := &aipb.CancelBatchPredictionJobRequest{Name: jobName}
 	return client.CancelBatchPredictionJob(ctx, req)
 }
 

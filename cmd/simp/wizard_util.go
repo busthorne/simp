@@ -57,7 +57,7 @@ func (w *wizardState) apikey() string {
 }
 
 func (w *wizardState) writeConfig() error {
-	if err := os.MkdirAll(w.configPath, 0755); err != nil {
+	if err := os.MkdirAll(w.configPath, 0600); err != nil {
 		return err
 	}
 	b, err := config.Configure("simp", w.Config)
@@ -66,7 +66,7 @@ func (w *wizardState) writeConfig() error {
 	}
 	fpath := filepath.Join(w.configPath, "simp.hcl")
 	fmt.Printf("-> %s\n", fpath)
-	return os.WriteFile(fpath, b, 0755)
+	return os.WriteFile(fpath, b, 0600)
 }
 
 func (w *wizardState) defaultProviderName(driver string) string {
@@ -125,7 +125,7 @@ func (w *wizardState) input(prompt wizardPrompt) string {
 	if err != nil {
 		w.abort()
 	}
-	if f := result.(wizardPrompt); f.aborted {
+	if f, ok := result.(wizardPrompt); !ok || f.aborted {
 		w.abort()
 	} else {
 		fmt.Println(result.View())
@@ -141,8 +141,7 @@ func (m wizardPrompt) Init() tea.Cmd {
 func (m wizardPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyCtrlZ, tea.KeyCtrlD:
 			m.aborted = true

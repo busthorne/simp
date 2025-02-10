@@ -8,3 +8,7 @@
 !LICENSE
 cmd/simp/simp
 .*
+!.github/*
+!.goreleaser
+!.git*
+!.go*

@@ -65,7 +65,7 @@ func saveHistory() {
 			fpath = path.Join(anthology, title+".simp.md")
 		}
 		if _, err := os.Stat(fpath); err != nil {
-			os.WriteFile(fpath, []byte(cable.String()), 0644)
+			os.WriteFile(fpath, []byte(cable.String()), 0644) //nolint:gosec
 			break
 		}
 	}
