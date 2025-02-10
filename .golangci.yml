@@ -1,72 +1,70 @@
 linters:
   enable-all: true
-    disable:
-    # TODO: need to re-think how we do error handling, really
-    - errorlint
-    - wastedassign
-    # TODO: deserves investigation
-    - paralleltest
-    - recvcheck
-    - thelper
-    - usetesting
-    - wrapcheck
-    # i don't agree
-    - inamedparam
-    - gofumpt
-    - intrange
-    - ireturn
-    - lll
-    - makezero
-    - mnd
-    - nakedret
-    - nestif
-    - nlreturn
-    - nonamedreturns
-    - perfsprint
-    - prealloc
-    - tagliatelle
-    - testpackage
-    - usestdlibvars
-    - varnamelen
-    - wastedassign
-    - wsl
-    # don't care if the comments are not dot-terminated
-    - godot
-    # hates init functions
-    - gochecknoinits
-    # love globals for the time being! current state of mind
-    - gochecknoglobals
-    # functions are too long? please
-    - funlen
-    # doesn't allow fmt.Println in ./cmd/simp
-    - forbidigo
-    # not everything has to be initialized explicitly
-    - exhaustive
-    - exhaustruct
-    # doesn't like dynamic errors
-    - err113
-    # requires basically vetting every single dependency?
-    - depguard
-    # deprecated linters:
-    - deadcode
-    - exhaustivestruct
-    - golint
-    - ifshort
-    - interfacer
-    - maligned
-    - gomnd
-    - nosnakecase
-    - scopelint
-    - structcheck
-    - varcheck
+  disable:
+  # TODO: need to re-think how we do error handling, really
+  - errorlint
+  - wastedassign
+  # TODO: deserves investigation
+  - paralleltest
+  - recvcheck
+  - thelper
+  - usetesting
+  - wrapcheck
+  # i don't agree
+  - inamedparam
+  - gofumpt
+  - intrange
+  - ireturn
+  - lll
+  - makezero
+  - mnd
+  - nakedret
+  - nestif
+  - nlreturn
+  - nonamedreturns
+  - perfsprint
+  - prealloc
+  - tagliatelle
+  - testpackage
+  - usestdlibvars
+  - varnamelen
+  - wastedassign
+  - wsl
+  # don't care if the comments are not dot-terminated
+  - godot
+  # hates init functions
+  - gochecknoinits
+  # love globals for the time being! current state of mind
+  - gochecknoglobals
+  # functions are too long? please
+  - funlen
+  # doesn't allow fmt.Println in ./cmd/simp
+  - forbidigo
+  # not everything has to be initialized explicitly
+  - exhaustive
+  - exhaustruct
+  # doesn't like dynamic errors
+  - err113
+  # requires basically vetting every single dependency?
+  - depguard
+  # deprecated linters:
+  - deadcode
+  - exhaustivestruct
+  - golint
+  - ifshort
+  - interfacer
+  - maligned
+  - gomnd
+  - nosnakecase
+  - scopelint
+  - structcheck
+  - varcheck
 
 severity:
   default-severity: error
+  case-sensitive: false
   rules:
-    - linters:
-        - errcheck
+    - linters: [errcheck]
       severity: warning
-    - linters:
-        - dupl
-        - godox
+    - linters: [dupl, godox]
       severity: info
