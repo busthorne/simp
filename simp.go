@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 )
 
+const (
+	GuidelineInput  = ">>>"
+	GuidelineOutput = "<<<"
+)
+
 var (
 	// Path is $SIMPPATH defaulting to $HOME/.simp
 	Path string

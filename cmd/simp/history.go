@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/cable"
 	"github.com/busthorne/simp/config"
 	"github.com/sashabaranov/go-openai"
 )
@@ -33,18 +34,18 @@ func saveHistory() {
 			stderr("simp: cannot find annotation model:", err)
 			exit(1)
 		}
-		task := simp.Message{
-			Role:    "system",
-			Content: annotation,
+		task := cable.Message{
+			Role:     "system",
+			Contents: []cable.Content{{Text: annotation}},
 		}
-		if cable.Thread[0].Role != "system" {
-			cable.Thread = append([]simp.Message{task}, cable.Thread...)
+		if cab.Thread[0].Role != "system" {
+			cab.Thread = append([]cable.Message{task}, cab.Thread...)
 		} else {
-			cable.Thread[0] = task
+			cab.Thread[0] = task
 		}
 		resp, err := drv.Chat(bg, openai.ChatCompletionRequest{
 			Model:    m.Name,
-			Messages: cable.Messages(),
+			Messages: cab.Messages(),
 		})
 		if err != nil {
 			stderr("simp: cannot annotate conversation:", err)
@@ -60,12 +61,12 @@ func saveHistory() {
 	for i := 0; i < 10; i++ {
 		fpath := ""
 		if i > 0 {
-			fpath = path.Join(anthology, fmt.Sprintf("%s-%d.simp.md", title, i+1))
+			fpath = path.Join(anthology, fmt.Sprintf("%s-%d.c.md", title, i+1))
 		} else {
-			fpath = path.Join(anthology, title+".simp.md")
+			fpath = path.Join(anthology, title+".c.md")
 		}
 		if _, err := os.Stat(fpath); err != nil {
-			os.WriteFile(fpath, []byte(cable.String()), 0644) //nolint:gosec
+			os.WriteFile(fpath, []byte(cab.String()), 0644) //nolint:gosec
 			break
 		}
 	}

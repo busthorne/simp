@@ -8,19 +8,20 @@ import (
 	"time"
 
 	"github.com/busthorne/simp"
+	"github.com/busthorne/simp/cable"
 	"github.com/sashabaranov/go-openai"
 )
 
 func cabling(prompt string) error {
-	if !cable.Empty() {
-		cable.AppendUser(prompt)
+	if !cab.Empty() {
+		cab.AppendUser(prompt)
 		return nil
 	}
-	c, err := simp.ParseCable(prompt)
+	c, err := cable.ParseCable(prompt)
 	if err != nil {
 		return err
 	}
-	cable = c
+	cab = c
 	return nil
 }
 
@@ -52,14 +53,13 @@ func promptComplete() error {
 	if err := cabling(prompt); err != nil {
 		return fmt.Errorf("bad cable: %v", err)
 	}
-	ws = cable.Whitespace
 	drv, m, err := findWaldo(model)
 	if err != nil {
 		return err
 	}
 	if *vim || *interactive {
 		fmt.Println()
-		fmt.Printf("%s%s %s\n", ws, simp.MarkAsst, m.ShortestAlias())
+		fmt.Printf("%s %s\n", cab.Tab(simp.GuidelineOutput), m.ShortestAlias())
 	}
 	var so *openai.StreamOptions
 	if !*nos {
@@ -72,7 +72,7 @@ func promptComplete() error {
 	resp, err := drv.Chat(ctx, openai.ChatCompletionRequest{
 		Stream:           !*nos,
 		Model:            m.Name,
-		Messages:         cable.Messages(),
+		Messages:         cab.Messages(),
 		Temperature:      coalesce(temperature, m.Temperature, cfg.Default.Temperature),
 		TopP:             coalesce(topP, m.TopP, cfg.Default.TopP),
 		FrequencyPenalty: coalesce(frequencyPenalty, m.FrequencyPenalty, cfg.Default.FrequencyPenalty),
@@ -120,7 +120,7 @@ suffix:
 			time.Since(start).Round(time.Second/100))
 	}
 	if *vim {
-		fmt.Printf("\n%s%s\n\n", ws, simp.MarkUser)
+		fmt.Printf("\n%s\n", cab.Tab(simp.GuidelineInput))
 	}
 	if !*interactive {
 		return io.EOF

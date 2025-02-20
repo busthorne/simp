@@ -17,6 +17,7 @@ import (
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/auth"
 	"github.com/busthorne/simp/books"
+	"github.com/busthorne/simp/cable"
 	"github.com/busthorne/simp/config"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gofiber/fiber/v2/log"
@@ -40,10 +41,9 @@ var (
 	presencePenalty  = flag.Float64("pp", -1, "presence penalty")
 
 	model     string
-	ws        string
 	anthology string // winning history path
 	cfg       *config.Config
-	cable     simp.Cable
+	cab       *cable.Cable
 
 	bg = context.Background()
 )
