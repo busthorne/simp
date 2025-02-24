@@ -12,19 +12,22 @@ import (
 	"github.com/busthorne/simp"
 )
 
+// Captures: whitespace, mark, annotation
+var (
+	ErrNotCable          = errors.New("cable: not a cable")
+	ErrAttachmentMissing = errors.New("cable: attachment has no path or url")
+	ErrUnknownOperator   = errors.New("cable: unknown operator")
+
+	marx = regexp.MustCompile(`(?m)^([\t ]*)(>{3,}|<{3,})(?: +(\S+))?$`)
+	trim = strings.TrimSpace
+)
+
 type Cable struct {
 	Thread []Message
 
 	ws  string
 	alt map[int][]int
 }
-
-// Captures: whitespace, mark, annotation
-var (
-	ErrNotCable = errors.New("cable: not a cable")
-
-	marx = regexp.MustCompile(`(?m)^([\t ]*)(>{3,}|<{3,})(?: +(\S+))?$`)
-)
 
 // ParseCable attempts to parse a cable from a string.
 //
@@ -33,7 +36,6 @@ var (
 func ParseCable(s string) (*Cable, error) {
 	c := &Cable{alt: make(map[int][]int)}
 	c.ws = "\t"
-	trim := strings.TrimSpace
 	marx := marx.FindAllStringSubmatchIndex(s, -1)
 	// If no marks found, treat entire input as user message
 	if len(marx) == 0 {
@@ -83,69 +85,8 @@ func ParseCable(s string) (*Cable, error) {
 	return c, nil
 }
 
-func (c *Cable) parseTail(m Message) error {
-	s := strings.Trim(m.content, "\n")
-	m.content = s
-	alt := 0
-	for strings.HasPrefix(s, c.ws) {
-		s = s[len(c.ws):]
-		i := strings.Index(s, "\n")
-		if i < 0 {
-			i = len(s)
-		}
-		op, err := ParseOperator(s[:i])
-		if err != nil {
-			return fmt.Errorf("cable: %s message at pos %d: %w",
-				m.Role, len(c.Thread), err)
-		}
-		if op, ok := op.(*Alternate); ok {
-			alt = op.Index
-		}
-		m.Ops = append(m.Ops, op)
-		if i == len(s) {
-			s = ""
-		} else {
-			s = s[i+1:]
-		}
-	}
-	if s = strings.TrimSpace(s); s == "" {
-		return fmt.Errorf("cable: %s message at pos %d is empty: %w",
-			m.Role, len(c.Thread), io.ErrUnexpectedEOF)
-	}
-	sort.Stable(Operators(m.Ops))
-
-	if seq, ok := c.alt[alt]; ok || alt == 0 {
-		c.alt[alt] = append(seq, len(c.Thread))
-	} else {
-		c.alt[alt] = append(c.alt[c.dominant()], len(c.Thread))
-	}
-
-	m.Contents = append(m.Contents, Content{Text: s})
-	c.Thread = append(c.Thread, m)
-	return nil
-}
-
-func (c *Cable) dominant() int {
-	for _, v := range slices.Backward(c.Thread) {
-		if v.Role != "user" {
-			continue
-		}
-		ops := v.Ops
-		for _, op := range ops {
-			if alt, ok := op.(*Alternate); ok {
-				return alt.Index
-			}
-		}
-	}
-	return 0
-}
-
 func (c *Cable) AppendUser(s string) {
 	c.Thread = append(c.Thread, Message{Role: "user", Contents: []Content{{Text: s}}})
-}
-
-func (c *Cable) Empty() bool {
-	return len(c.Thread) == 0
 }
 
 func (c *Cable) Tab(s string) (tab string) {
@@ -180,9 +121,67 @@ func (c *Cable) String() string {
 		s.WriteString("\n")
 	ops:
 		for _, op := range m.Ops {
-			s.WriteString(c.Tab(op.String()) + "\n")
+			s.WriteString(c.Tab(string(op.Op())+op.String()) + "\n")
 		}
 		s.WriteString(m.String())
 	}
 	return s.String()
+}
+
+func (c *Cable) parseTail(m Message) error {
+	s := strings.Trim(m.content, "\n")
+	m.content = s
+	alt := 0
+	for strings.HasPrefix(s, c.ws) {
+		s = s[len(c.ws):]
+		i := strings.Index(s, "\n")
+		if i < 0 {
+			i = len(s)
+		}
+		op, err := ParseOperator(s[:i])
+		if err != nil {
+			return fmt.Errorf("cable: %s message at pos %d: %w",
+				m.Role, len(c.Thread), err)
+		}
+		if op, ok := op.(*Alternate); ok {
+			alt = op.Index
+		}
+		m.Ops = append(m.Ops, op)
+		if i == len(s) {
+			s = ""
+		} else {
+			s = s[i+1:]
+		}
+	}
+	if s = strings.TrimSpace(s); s == "" {
+		return fmt.Errorf("cable: %s message at pos %d is empty: %w",
+			m.Role, len(c.Thread), io.ErrUnexpectedEOF)
+	}
+	sort.Stable(Operators(m.Ops))
+
+	if seq, ok := c.alt[alt]; ok || alt == 0 {
+		c.alt[alt] = append(seq, len(c.Thread))
+	} else {
+		c.alt[alt] = append(c.alt[dominant(c.Thread)], len(c.Thread))
+	}
+
+	m.Contents = append(m.Contents, Content{Text: s})
+	c.Thread = append(c.Thread, m)
+	return nil
+}
+
+// dominant alternate (the alternate index of the last user message)
+func dominant(thread []Message) int {
+	for _, v := range slices.Backward(thread) {
+		if v.Role != "user" {
+			continue
+		}
+		ops := v.Ops
+		for _, op := range ops {
+			if alt, ok := op.(*Alternate); ok {
+				return alt.Index
+			}
+		}
+	}
+	return 0
 }

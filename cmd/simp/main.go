@@ -62,7 +62,7 @@ func main() {
 		"i",
 	)
 	if conflicts != nil {
-		stderr("mutually exclusive flags:", strings.Join(conflicts, ", "))
+		stderr("simp: mutually exclusive flags:", strings.Join(conflicts, ", "))
 		exit(1)
 	}
 
@@ -87,11 +87,15 @@ func main() {
 		}
 		w, err := fsnotify.NewWatcher()
 		if err != nil {
-			stderr("failed to create watcher:", err)
+			stderr("simp:", err)
 			exit(1)
 		}
 		defer w.Close()
-		w.Add(path.Join(simp.Path, "config"))
+		configPath := path.Join(simp.Path, "config")
+		if err := w.Add(configPath); err != nil {
+			stderrf("simp: could not watch %q for changes: %s\n", configPath, err)
+			exit(1)
+		}
 
 		reload := make(stimulus)
 		go func() {
@@ -136,14 +140,14 @@ func main() {
 		stderr(interactiveHelp)
 	}
 	for {
-		switch err := promptComplete(); err {
-		case nil:
-		case io.EOF:
+		switch err := promptComplete(); {
+		case err == nil:
+		case errors.Is(err, io.EOF):
 			// so that the reader doesn't have to wait for history
 			os.Stdout.Close()
 			return
 		default:
-			log.Error("failed to complete:", err)
+			log.Error("failed to complete: ", err)
 			exit(1)
 		}
 	}

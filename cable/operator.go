@@ -2,7 +2,6 @@ package cable
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,11 +17,6 @@ type OperatorType string
 const (
 	OperatorAlternate OperatorType = "#"
 	OperatorAttach    OperatorType = "+"
-)
-
-var (
-	ErrAttachmentMissing = errors.New("cable: attachment has no path or url")
-	ErrUnknownOperator   = errors.New("cable: unknown operator")
 )
 
 func (op OperatorType) Ord() int {
@@ -80,7 +74,7 @@ func NewAlternate(s string) (*Alternate, error) {
 
 func (a *Alternate) Op() OperatorType { return OperatorAlternate }
 
-func (a *Alternate) String() string { return string(OperatorAlternate) + strconv.Itoa(a.Index) }
+func (a *Alternate) String() string { return strconv.Itoa(a.Index) }
 
 type Attachment struct {
 	Path string
@@ -106,15 +100,15 @@ func NewAttachment(path string) (*Attachment, error) {
 
 func (a *Attachment) Op() OperatorType { return OperatorAttach }
 
-func (a *Attachment) String() (s string) {
-	s = string(OperatorAttach)
+func (a *Attachment) String() string {
 	switch {
 	case a.Path != "":
-		s += a.Path
+		return a.Path
 	case a.URL != nil:
-		s += a.URL.String()
+		return a.URL.String()
+	default:
+		return ""
 	}
-	return
 }
 
 func MimeType(fpath string) string {

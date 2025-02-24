@@ -12,19 +12,6 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-func cabling(prompt string) error {
-	if !cab.Empty() {
-		cab.AppendUser(prompt)
-		return nil
-	}
-	c, err := cable.ParseCable(prompt)
-	if err != nil {
-		return err
-	}
-	cab = c
-	return nil
-}
-
 // promptComplete reads the prompt from stdin once in non-interactive mode,
 // or keeps asking for newline-terminated input otherwise. it would insert
 // a prompt marker in either vim, or interactive mode.
@@ -50,22 +37,17 @@ func promptComplete() error {
 		prompt = string(b)
 	}
 	// parse cable
-	if err := cabling(prompt); err != nil {
-		return fmt.Errorf("bad cable: %v", err)
-	}
-	drv, m, err := findWaldo(model)
-	if err != nil {
-		return err
-	}
-	if *vim || *interactive {
-		fmt.Println()
-		fmt.Printf("%s %s\n", cab.Tab(simp.GuidelineOutput), m.ShortestAlias())
-	}
-	var so *openai.StreamOptions
-	if !*nos {
-		so = &openai.StreamOptions{
-			IncludeUsage: true,
+	if cab == nil {
+		c, err := cable.ParseCable(prompt)
+		switch err {
+		case nil:
+		case cable.ErrNotCable:
+		default:
+			return err
 		}
+		cab = c
+	} else {
+		cab.AppendUser(prompt)
 	}
 	start := time.Now()
 	ctx := context.WithValue(bg, simp.KeyModel, m)
@@ -85,39 +67,43 @@ func promptComplete() error {
 	}
 	if *nos {
 		fmt.Println(resp.Choices[0].Message.Content)
-		goto suffix
+		return io.EOF
 	}
 	for chunk := range resp.Stream {
 		if chunk.Usage != nil {
 			resp.Usage = *chunk.Usage
 			continue
 		}
-		c := chunk.Choices[0]
-		switch c.FinishReason {
-		case "":
-			fmt.Print(chunk.Choices[0].Delta.Content)
-		case "stop":
-		case "length":
-		case "function_call":
-		case "tool_calls":
-		case "content_filter":
-		case "null":
-		case "error":
-			stderr("stream complete:", chunk.Error)
-			exit(1)
+		for chunk := range resp.Stream {
+			if chunk.Usage != nil {
+				resp.Usage = *chunk.Usage
+				continue
+			}
+			c := chunk.Choices[0]
+			switch c.FinishReason {
+			case "":
+				fmt.Print(chunk.Choices[0].Delta.Content)
+			case "stop":
+			case "length":
+			case "function_call":
+			case "tool_calls":
+			case "content_filter":
+			case "null":
+			case "error":
+				return fmt.Errorf("error in continuation %d from %T: %w", p.Alt, drv, chunk.Error)
+			}
 		}
-	}
-	fmt.Println()
-suffix:
-	if *verbose {
-		stderrf("\n\t\t\t%d", resp.Usage.PromptTokens)
-		if resp.Usage.PromptTokensDetails != nil {
-			stderrf(" (%d)", resp.Usage.PromptTokensDetails.CachedTokens)
+		fmt.Println()
+		if *verbose {
+			stderrf("\n\t\t\t%d", resp.Usage.PromptTokens)
+			if resp.Usage.PromptTokensDetails != nil {
+				stderrf(" (%d)", resp.Usage.PromptTokensDetails.CachedTokens)
+			}
+			stderrf(" + %d = %d\t%v\n",
+				resp.Usage.CompletionTokens,
+				resp.Usage.TotalTokens,
+				time.Since(start).Round(time.Second/100))
 		}
-		stderrf(" + %d = %d\t%v\n",
-			resp.Usage.CompletionTokens,
-			resp.Usage.TotalTokens,
-			time.Since(start).Round(time.Second/100))
 	}
 	if *vim {
 		fmt.Printf("\n%s\n", cab.Tab(simp.GuidelineInput))
