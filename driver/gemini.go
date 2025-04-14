@@ -96,6 +96,9 @@ func (g *Gemini) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	}
 	model := client.GenerativeModel(req.Model)
 	model.SetTemperature(req.Temperature)
+	if scm := req.ResponseFormat.JSONSchema; scm != nil {
+		return c, fmt.Errorf("json schema for gemini is hell")
+	}
 	if v := req.MaxTokens; v != 0 {
 		model.SetMaxOutputTokens(int32(v)) //nolint:gosec
 	}

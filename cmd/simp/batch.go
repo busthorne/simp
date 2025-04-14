@@ -33,7 +33,7 @@ func notkeep(err error, format string, args ...any) error {
 //	1000 to 2000 tokens per completion which is far too little
 //
 // TODO: this should probably implement adaptive, provider-aware splitting, but hey
-const realBatchSize = 25000
+const realBatchSize = 10000
 
 func BatchUpload(c *fiber.Ctx) error {
 	ctx := c.Context()

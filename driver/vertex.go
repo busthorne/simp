@@ -10,7 +10,9 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	aipl "cloud.google.com/go/aiplatform/apiv1"
 	aipb "cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
@@ -136,7 +138,23 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	}
 
 	model := client.GenerativeModel(req.Model)
+
+	if v, ok := req.Metadata["cache_ttl"]; ok {
+		t, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return c, fmt.Errorf("invalid cache ttl: %w", err)
+		}
+		cc, err := client.CreateCachedContent(ctx, &genai.CachedContent{
+			Expiration:        genai.ExpireTimeOrTTL{TTL: time.Duration(t) * time.Second},
+			SystemInstruction: &genai.Content{},
+			Contents:          []*genai.Contents,
+		})
+	}
+
 	model.SetTemperature(req.Temperature)
+	if scm := req.ResponseFormat.JSONSchema; scm != nil {
+		return c, fmt.Errorf("json schema for vertex is hell")
+	}
 	if v := req.MaxTokens; v != 0 {
 		model.SetMaxOutputTokens(int32(v)) //nolint:gosec
 	}
@@ -151,6 +169,7 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	}
 	cs := model.StartChat()
 	h := []*genai.Content{}
+	v.marshal(ctx, &req)
 	for i, msg := range req.Messages {
 		role := msg.Role
 		switch role {
@@ -538,7 +557,7 @@ func (v *Vertex) BatchCancel(ctx context.Context, batch *openai.Batch) error {
 	return client.CancelBatchPredictionJob(ctx, req)
 }
 
-func (v *Vertex) marshal(ctx context.Context, a *openai.ChatCompletionRequest) (string, error) {
+func (v *Vertex) marshalChat(ctx context.Context, a *openai.ChatCompletionRequest) (string, error) {
 	req := map[string]any{}
 	contents := make([]VertexC, 0, len(a.Messages))
 	for i, msg := range a.Messages {
