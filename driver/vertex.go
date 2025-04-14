@@ -296,7 +296,7 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		if len(models) > 1 {
 			return fmt.Errorf("all completions must use the same model")
 		}
-		req, err := v.marshal(ctx, input.ChatCompletion)
+		req, err := v.marshalChat(ctx, input.ChatCompletion)
 		if err != nil {
 			return fmt.Errorf("message/%d could not be marshaled: %w", i, err)
 		}
@@ -459,6 +459,63 @@ type VertexC struct {
 	Parts []VertexP `json:"parts"`
 }
 
+func (v *Vertex) marshalChat(ctx context.Context, a *openai.ChatCompletionRequest) (string, error) {
+	req := map[string]any{}
+	contents := make([]VertexC, 0, len(a.Messages))
+	for i, msg := range a.Messages {
+		var (
+			c    VertexC
+			role = msg.Role
+			mp   = msg.MultiContent
+		)
+		if len(mp) == 0 {
+			if msg.Content == "" {
+				return "", fmt.Errorf("empty message/%d", i)
+			}
+			mp = append(mp, openai.ChatMessagePart{Type: "text", Text: msg.Content})
+		}
+		for j, p := range mp {
+			switch p.Type {
+			case openai.ChatMessagePartTypeText:
+				c.Parts = append(c.Parts, VertexP{Text: p.Text})
+			case openai.ChatMessagePartTypeImageURL:
+				if p.ImageURL == nil || p.ImageURL.URL == "" {
+					return "", fmt.Errorf("no fileUri present in message/%d part/%d", i, j)
+				}
+				gs, mime, err := v.fileUpload(ctx, p.ImageURL.URL)
+				if err != nil {
+					return "", fmt.Errorf("upload message/%d part/%d: %w", i, j, err)
+				}
+				c.Parts = append(c.Parts, VertexP{File: &VertexF{FileUri: gs, MimeType: mime}})
+			default:
+				return "", fmt.Errorf("message/%d part/%d: %w", i, j, simp.ErrUnsupportedInput)
+			}
+		}
+		switch role {
+		case "system":
+			if i != 0 {
+				return "", fmt.Errorf("message/%d: %w", i, simp.ErrMisplacedSystem)
+			}
+			req["system_instruction"] = c
+			continue
+		case "user":
+		case "assistant":
+			role = "model"
+		default:
+			return "", fmt.Errorf("message/%d: %w", i, simp.ErrUnsupportedRole)
+		}
+		c.Role = role
+		contents = append(contents, c)
+	}
+	req["contents"] = contents
+
+	b, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs []openai.BatchOutput, err error) {
 	client, err := v.bigqueryClient(ctx)
 	if err != nil {
@@ -484,9 +541,9 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 		TotalTokenCount      int `json:"totalTokenCount"`
 	}
 	type Response struct {
-		Candidates    []Candidates `json:"candidates"`
-		ModelVersion  string       `json:"modelVersion"`
-		UsageMetadata Usage        `json:"usageMetadata"`
+		Candidates    []genai.Candidate `json:"candidates"`
+		ModelVersion  string            `json:"modelVersion"`
+		UsageMetadata Usage             `json:"usageMetadata"`
 	}
 	table := "predict-" + batch.InputFileID
 	it := client.
@@ -555,63 +612,6 @@ func (v *Vertex) BatchCancel(ctx context.Context, batch *openai.Batch) error {
 	}
 	req := &aipb.CancelBatchPredictionJobRequest{Name: jobName}
 	return client.CancelBatchPredictionJob(ctx, req)
-}
-
-func (v *Vertex) marshalChat(ctx context.Context, a *openai.ChatCompletionRequest) (string, error) {
-	req := map[string]any{}
-	contents := make([]VertexC, 0, len(a.Messages))
-	for i, msg := range a.Messages {
-		var (
-			c    VertexC
-			role = msg.Role
-			mp   = msg.MultiContent
-		)
-		if len(mp) == 0 {
-			if msg.Content == "" {
-				return "", fmt.Errorf("empty message/%d", i)
-			}
-			mp = append(mp, openai.ChatMessagePart{Type: "text", Text: msg.Content})
-		}
-		for j, p := range mp {
-			switch p.Type {
-			case openai.ChatMessagePartTypeText:
-				c.Parts = append(c.Parts, VertexP{Text: p.Text})
-			case openai.ChatMessagePartTypeImageURL:
-				if p.ImageURL == nil || p.ImageURL.URL == "" {
-					return "", fmt.Errorf("no fileUri present in message/%d part/%d", i, j)
-				}
-				gs, mime, err := v.fileUpload(ctx, p.ImageURL.URL)
-				if err != nil {
-					return "", fmt.Errorf("upload message/%d part/%d: %w", i, j, err)
-				}
-				c.Parts = append(c.Parts, VertexP{File: &VertexF{FileUri: gs, MimeType: mime}})
-			default:
-				return "", fmt.Errorf("message/%d part/%d: %w", i, j, simp.ErrUnsupportedInput)
-			}
-		}
-		switch role {
-		case "system":
-			if i != 0 {
-				return "", fmt.Errorf("message/%d: %w", i, simp.ErrMisplacedSystem)
-			}
-			req["system_instruction"] = c
-			continue
-		case "user":
-		case "assistant":
-			role = "model"
-		default:
-			return "", fmt.Errorf("message/%d: %w", i, simp.ErrUnsupportedRole)
-		}
-		c.Role = role
-		contents = append(contents, c)
-	}
-	req["contents"] = contents
-
-	b, err := json.Marshal(req)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 func (v *Vertex) fileUpload(ctx context.Context, fileUri string) (gs, mime string, ret error) {
