@@ -10,7 +10,6 @@ require (
 	cloud.google.com/go/aiplatform v1.74.0
 	cloud.google.com/go/bigquery v1.66.2
 	cloud.google.com/go/storage v1.50.0
-	cloud.google.com/go/vertexai v0.13.2
 	filippo.io/xaes256gcm v0.1.0
 	github.com/anthropics/anthropic-sdk-go v0.2.0-alpha.4
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
@@ -26,8 +25,9 @@ require (
 	github.com/hashicorp/hcl/v2 v2.22.0
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/sashabaranov/go-openai v1.38.1
+	golang.org/x/oauth2 v0.29.0
 	google.golang.org/api v0.228.0
-	google.golang.org/protobuf v1.36.6
+	google.golang.org/genai v1.0.0
 )
 
 require (
@@ -109,7 +109,6 @@ require (
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/mod v0.22.0 // indirect
 	golang.org/x/net v0.39.0 // indirect
-	golang.org/x/oauth2 v0.29.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/term v0.31.0 // indirect
@@ -117,11 +116,11 @@ require (
 	golang.org/x/time v0.11.0 // indirect
 	golang.org/x/tools v0.29.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/genai v1.0.0 // indirect
 	google.golang.org/genproto v0.0.0-20250303144028-a0af3efb3deb // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250409194420-de1ac958c67a // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250409194420-de1ac958c67a // indirect
 	google.golang.org/grpc v1.71.1 // indirect
+	google.golang.org/protobuf v1.36.6 // indirect
 )
 
 exclude google.golang.org/grpc/stats/opentelemetry v0.0.0-20240907200651-3ffb98b2c93a

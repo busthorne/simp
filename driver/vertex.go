@@ -16,11 +16,14 @@ import (
 
 	aipl "cloud.google.com/go/aiplatform/apiv1"
 	aipb "cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
+	"cloud.google.com/go/auth"
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/storage"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
 	"github.com/sashabaranov/go-openai"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/genai"
@@ -123,6 +126,7 @@ func (v *Vertex) encode(ctx context.Context, req openai.ChatCompletionRequest) (
 		contents = []*genai.Content{}
 		config   = &genai.GenerateContentConfig{}
 	)
+	config.CandidateCount = int32(req.N)
 	for _, msg := range req.Messages {
 		role := ""
 		switch msg.Role {
@@ -258,6 +262,11 @@ func (v *Vertex) decode(ctx context.Context, ret *genai.GenerateContentResponse)
 			PromptTokens:     int(meta.PromptTokenCount),
 			CompletionTokens: int(meta.CandidatesTokenCount),
 			TotalTokens:      int(meta.TotalTokenCount),
+		}
+		if c := meta.CachedContentTokenCount; c > 0 {
+			resp.Usage.PromptTokensDetails = &openai.PromptTokensDetails{
+				CachedTokens: int(c),
+			}
 		}
 	}
 	return resp, nil
@@ -729,18 +738,25 @@ func (v *Vertex) updateStatus(batch *openai.Batch, state aipb.JobState) {
 }
 
 func (v *Vertex) genaiClient(ctx context.Context) (*genai.Client, error) {
+	creds, err := google.CredentialsFromJSON(ctx, []byte(v.APIKey), "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse credentials file: %w", err)
+	}
+	httpClient := oauth2.NewClient(ctx, creds.TokenSource)
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		Backend:  genai.BackendVertexAI,
 		Project:  v.Project,
 		Location: v.Region,
-		// Credentials: auth.NewCredentials(&auth.CredentialsOptions{
-		// 	TokenProvider: auth
-		// 	JSON: []byte(v.APIKey),
-		// }),
-		HTTPOptions: genai.HTTPOptions{APIVersion: "v1"},
+		Credentials: auth.NewCredentials(&auth.CredentialsOptions{
+			JSON: []byte(v.APIKey),
+		}),
+		HTTPClient: httpClient,
+		HTTPOptions: genai.HTTPOptions{
+			APIVersion: "v1beta1",
+		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("cannot make client: %w", err)
+		return nil, fmt.Errorf("cannot make genai client: %w", err)
 	}
 	return client, nil
 }
