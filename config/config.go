@@ -60,11 +60,11 @@ type Default struct {
 }
 
 type ModelDefault struct {
-	MaxTokens        int      `hcl:"max_tokens,optional"`
-	Temperature      *float64 `hcl:"temperature,optional"`
-	TopP             *float64 `hcl:"top_p,optional"`
-	FrequencyPenalty *float64 `hcl:"frequency_penalty,optional"`
-	PresencePenalty  *float64 `hcl:"presence_penalty,optional"`
+	MaxTokens        int32    `hcl:"max_tokens,optional"`
+	Temperature      *float32 `hcl:"temperature,optional"`
+	TopP             *float32 `hcl:"top_p,optional"`
+	FrequencyPenalty *float32 `hcl:"frequency_penalty,optional"`
+	PresencePenalty  *float32 `hcl:"presence_penalty,optional"`
 	Seed             *int32   `hcl:"seed,optional"`
 	Stop             []string `hcl:"stop,optional"`
 }

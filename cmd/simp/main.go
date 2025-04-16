@@ -34,10 +34,10 @@ var (
 	tracing          = flag.Bool("vvv", false, "very, very verbose (trace) output")
 	nos              = flag.Bool("nos", false, "disable streaming")
 	lessThan         = flag.Int("lt", 0, "less than this many tokens")
-	temperature      = flag.Float64("t", 0, "temperature")
-	topP             = flag.Float64("p", 0, "top_p sampling")
-	frequencyPenalty = flag.Float64("fp", 0, "frequency penalty")
-	presencePenalty  = flag.Float64("pp", 0, "presence penalty")
+	temperature      = flag.Float64("t", -1, "temperature")
+	topP             = flag.Float64("p", -1, "top_p sampling")
+	frequencyPenalty = flag.Float64("fp", -1, "frequency penalty")
+	presencePenalty  = flag.Float64("pp", -1, "presence penalty")
 
 	model     string
 	ws        string
@@ -267,12 +267,24 @@ func exit(code int) {
 	os.Exit(code)
 }
 
-func coalesce32(a ...*float64) float32 {
+func coalesce(a ...any) (k float32) {
 	for _, v := range a {
-		if v == nil {
+		switch v := v.(type) {
+		case *float32:
+			if v == nil {
+				continue
+			}
+			k = *v
+		case *float64:
+			if v == nil {
+				continue
+			}
+			k = float32(*v)
+		}
+		if k < 0 {
 			continue
 		}
-		return float32(*v)
+		return
 	}
 	return 0
 }

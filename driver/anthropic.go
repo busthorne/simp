@@ -34,9 +34,7 @@ func (a *Anthropic) translate(ctx context.Context, req openai.ChatCompletionRequ
 	m, _ := ctx.Value(simp.KeyModel).(config.Model)
 	maxTokens := 4096
 	if req.MaxTokens > 0 {
-		maxTokens = req.MaxTokens
-	} else if m.MaxTokens > 0 {
-		maxTokens = m.MaxTokens
+		maxTokens = int(req.MaxTokens)
 	}
 	p := anthropic.BetaMessageNewParams{
 		Model:       anthropic.F(req.Model),
