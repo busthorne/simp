@@ -252,9 +252,13 @@ func (a *Anthropic) BatchSend(ctx context.Context, b *openai.Batch) error {
 }
 
 func (a *Anthropic) BatchRefresh(ctx context.Context, b *openai.Batch) error {
+	job, ok := b.Metadata["job"].(string)
+	if !ok {
+		return fmt.Errorf("job is unknown")
+	}
 	batch, err := a.Beta.Messages.Batches.Get(
 		ctx,
-		b.Metadata["job"].(string),
+		job,
 		anthropic.BetaMessageBatchGetParams{})
 	if err != nil {
 		return err
@@ -266,9 +270,13 @@ func (a *Anthropic) BatchRefresh(ctx context.Context, b *openai.Batch) error {
 }
 
 func (a *Anthropic) BatchReceive(ctx context.Context, b *openai.Batch) (outputs []openai.BatchOutput, ret error) {
+	job, ok := b.Metadata["job"].(string)
+	if !ok {
+		return nil, fmt.Errorf("job is unknown")
+	}
 	resp, err := a.Beta.Messages.Batches.Results(
 		ctx,
-		b.Metadata["job"].(string),
+		job,
 		anthropic.BetaMessageBatchResultsParams{})
 	if err != nil {
 		return nil, err
@@ -317,9 +325,13 @@ func (a *Anthropic) BatchReceive(ctx context.Context, b *openai.Batch) (outputs 
 }
 
 func (a *Anthropic) BatchCancel(ctx context.Context, b *openai.Batch) error {
+	job, ok := b.Metadata["job"].(string)
+	if !ok {
+		return fmt.Errorf("job is unknown")
+	}
 	batch, err := a.Beta.Messages.Batches.Cancel(
 		ctx,
-		b.Metadata["job"].(string),
+		job,
 		anthropic.BetaMessageBatchCancelParams{})
 	if err != nil {
 		return fmt.Errorf("failed to cancel batch: %w", err)

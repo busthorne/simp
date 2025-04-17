@@ -76,7 +76,11 @@ func (o *OpenAI) BatchSend(ctx context.Context, batch *openai.Batch) error {
 }
 
 func (o *OpenAI) BatchRefresh(ctx context.Context, batch *openai.Batch) error {
-	b, err := o.RetrieveBatch(ctx, batch.Metadata["real_id"].(string))
+	id, ok := batch.Metadata["real_id"].(string)
+	if !ok {
+		return fmt.Errorf("real_id is unknown")
+	}
+	b, err := o.RetrieveBatch(ctx, id)
 	if err != nil {
 		return fmt.Errorf("upstream: %w", err)
 	}
@@ -94,7 +98,11 @@ func (o *OpenAI) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 }
 
 func (o *OpenAI) BatchCancel(ctx context.Context, batch *openai.Batch) error {
-	_, err := o.CancelBatch(ctx, batch.Metadata["real_id"].(string))
+	id, ok := batch.Metadata["real_id"].(string)
+	if !ok {
+		return fmt.Errorf("real_id is unknown")
+	}
+	_, err := o.CancelBatch(ctx, id)
 	if err != nil {
 		return fmt.Errorf("upstream: %w", err)
 	}

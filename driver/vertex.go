@@ -214,7 +214,7 @@ func (v *Vertex) encode(ctx context.Context, req openai.ChatCompletionRequest) (
 	}, nil
 }
 
-func (v *Vertex) decode(ctx context.Context, ret *genai.GenerateContentResponse) (openai.ChatCompletionResponse, error) {
+func (v *Vertex) decode(ret *genai.GenerateContentResponse) (openai.ChatCompletionResponse, error) {
 	var resp = openai.ChatCompletionResponse{
 		Object:  "chat.completion",
 		Created: ret.CreateTime.Unix(),
@@ -369,7 +369,7 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 		if err != nil {
 			return c, fmt.Errorf("vertex GenerateContent failed: %w", err)
 		}
-		return v.decode(ctx, resp)
+		return v.decode(resp)
 	}
 	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
@@ -381,7 +381,7 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 				c.Stream <- openai.ChatCompletionStreamResponse{Error: err}
 				return
 			}
-			resp, err := v.decode(ctx, chunk)
+			resp, err := v.decode(chunk)
 			if err != nil {
 				c.Stream <- openai.ChatCompletionStreamResponse{Error: err}
 				return
@@ -651,7 +651,7 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 		if err := json.Unmarshal([]byte(row.Response), &resp); err != nil {
 			return nil, fmt.Errorf("cannot unmarshal response/%s: %w", row.ID, err)
 		}
-		output, err := v.decode(ctx, &resp)
+		output, err := v.decode(&resp)
 		if err != nil {
 			return nil, fmt.Errorf("cannot decode response/%s: %w", row.ID, err)
 		}
