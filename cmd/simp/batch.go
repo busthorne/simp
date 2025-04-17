@@ -27,14 +27,6 @@ func notkeep(err error, format string, args ...any) error {
 	return fmt.Errorf("%w: %s: %v", simp.ErrBookkeeping, fmt.Sprintf(format, args...), err)
 }
 
-// NOTE: both OpenAI and Vertex allow 50K batches, however at 200 MB limit (OpenAI)
-//
-//	there's only 4 KB on average which only corresponds to anywhere from
-//	1000 to 2000 tokens per completion which is far too little
-//
-// TODO: this should probably implement adaptive, provider-aware splitting, but hey
-const realBatchSize = 25000
-
 func BatchUpload(c *fiber.Ctx) error {
 	ctx := c.Context()
 
@@ -181,7 +173,7 @@ eof:
 			parent = super
 			bd, ok = drivers[model]
 		)
-		const chunkSize = realBatchSize
+		const chunkSize = 25000
 		if ok {
 			splits := make([][]openai.BatchInput, 0, len(inputs)/chunkSize+1)
 			for i := 0; i < len(inputs); i += chunkSize {
@@ -192,6 +184,7 @@ eof:
 				splits = append(splits, inputs[i:end])
 			}
 			for _, inputs := range splits {
+				log.Debugf("batch %q split length %d\n", super.ID, len(inputs))
 				b := openai.Batch{
 					ID:       uuid.New().String(),
 					Endpoint: inputs[0].URL,
@@ -435,7 +428,7 @@ func BatchReceive(c *fiber.Ctx) error {
 		}
 	}
 
-	const chunkSize = realBatchSize
+	const chunkSize = 10000
 
 	for i := int64(0); ; i += chunkSize {
 		outputs, err := book.BatchOpsCompleted(ctx, books.BatchOpsCompletedParams{

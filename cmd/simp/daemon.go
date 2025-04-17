@@ -12,12 +12,14 @@ import (
 	"github.com/busthorne/simp"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
+	"github.com/gofiber/fiber/v2/middleware/cache"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/sashabaranov/go-openai"
 )
 
 func listen() *fiber.App {
 	nop := notImplemented
+	once := cache.New(cache.Config{Expiration: time.Hour})
 
 	f := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
@@ -52,25 +54,32 @@ func listen() *fiber.App {
 			"type":    errType,
 		}})
 	})
+
 	v1 := f.Group("/v1")
 	v1.Get("/ping", func(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	})
-	v1.Get("/models", func(c *fiber.Ctx) error {
+	v1.Get("/models", once, func(c *fiber.Ctx) error {
 		var models []openai.Model
 		for _, p := range cfg.Providers {
-			for _, m := range p.Models {
-				models = append(models, openai.Model{
-					ID:     m.Name,
-					Object: "model",
-				})
-				for _, a := range m.Alias {
-					models = append(models, openai.Model{
-						ID:     a,
-						Object: "model",
-						Root:   m.Name,
-					})
+			acls := map[string][]openai.Permission{}
+			if drv, err := drive(p); err == nil {
+				if list, err := drv.List(c.Context()); err == nil {
+					for _, m := range list {
+						acls[m.ID] = m.Permission
+					}
 				}
+			}
+			for _, m := range p.Models {
+				omm := openai.Model{
+					ID:         m.Name,
+					Object:     "model",
+					OwnedBy:    p.Name,
+					Root:       p.Driver,
+					Parent:     strings.Join(m.Alias, ","),
+					Permission: acls[m.Name],
+				}
+				models = append(models, omm)
 			}
 		}
 		return c.JSON(openai.ModelsList{Models: models})

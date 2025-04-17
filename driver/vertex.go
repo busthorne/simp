@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,19 +11,23 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	aipl "cloud.google.com/go/aiplatform/apiv1"
 	aipb "cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
+	"cloud.google.com/go/auth"
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/storage"
-	"cloud.google.com/go/vertexai/genai"
 	"github.com/busthorne/simp"
 	"github.com/busthorne/simp/config"
 	"github.com/sashabaranov/go-openai"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/genai"
 )
 
 // NewVertex creates a new Vertex AI client.
@@ -43,90 +48,290 @@ type Vertex struct {
 }
 
 func (v *Vertex) List(ctx context.Context) ([]openai.Model, error) {
-	// Vertex AI doesn't have a direct model listing API
-	// Return predefined list of available models
-	return []openai.Model{
-		{ID: "gemini-1.5-flash-001"},
-		{ID: "gemini-1.5-flash-002"},
-		{ID: "gemini-1.5-pro-001"},
-		{ID: "gemini-1.5-pro-002"},
-		{ID: "gemini-flash-experimental"},
-		{ID: "gemini-pro-experimental"},
-	}, nil
+	client, err := v.genaiClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models := []openai.Model{}
+
+	for m, err := range client.Models.All(ctx) {
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, openai.Model{ID: m.Name})
+	}
+	return models, nil
 }
 
 func (v *Vertex) Embed(ctx context.Context, req openai.EmbeddingRequest) (e openai.EmbeddingResponse, ret error) {
-	var texts []string
-	for _, s := range req.Input {
-		if s.Text == "" {
-			return e, simp.ErrUnsupportedInput
-		}
-		texts = append(texts, s.Text)
-	}
-
-	client, err := v.predictionClient(ctx)
+	client, err := v.genaiClient(ctx)
 	if err != nil {
 		return e, err
 	}
-	defer client.Close()
 
-	instances := make([]*structpb.Value, len(texts))
-	for i, text := range texts {
-		p := map[string]any{"content": text}
+	var (
+		contents = []*genai.Content{}
+		config   = new(genai.EmbedContentConfig)
+	)
+	switch {
+	case req.Task != "":
+		config.TaskType = req.Task
+	case req.LateChunking:
+		config.TaskType = "RETRIEVAL_DOCUMENT"
+	}
+
+	for _, i := range req.Input {
 		switch {
-		case req.Task != "":
-			p["task_type"] = req.Task
-		case req.LateChunking:
-			p["task_type"] = "RETRIEVAL_DOCUMENT"
+		case i.Text != "":
+			contents = append(contents, genai.NewContentFromText(i.Text, genai.RoleUser))
+		case i.Image != "":
+			gs, mime, err := v.fileUpload(ctx, i.Image)
+			if err != nil {
+				return e, fmt.Errorf("cannot upload image: %w", err)
+			}
+			contents = append(contents, genai.NewContentFromURI(gs, mime, genai.RoleUser))
 		}
-		v, err := structpb.NewValue(p)
-		if err != nil {
-			return e, fmt.Errorf("cannot marshal instance/%d: %w", i, err)
-		}
-		instances[i] = v
 	}
-	p := map[string]any{}
-	if v := req.Dimensions; v != 0 {
-		p["outputDimensionality"] = v
+	if d := int32(req.Dimensions); d != 0 {
+		config.OutputDimensionality = &d
 	}
-	params, err := structpb.NewValue(p)
+	resp, err := client.Models.EmbedContent(ctx, req.Model, contents, config)
 	if err != nil {
-		return e, fmt.Errorf("cannot marshal model parameters: %w", err)
+		return e, fmt.Errorf("cannot embed content: %w", err)
 	}
-	resp, err := client.Predict(ctx, &aipb.PredictRequest{
-		Endpoint: fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s",
-			v.Project,
-			v.Region,
-			req.Model,
-		),
-		Instances:  instances,
-		Parameters: params,
-	})
-	if err != nil {
-		return e, err
-	}
-	for i, prediction := range resp.Predictions {
-		values := prediction.
-			GetStructValue().
-			Fields["embeddings"].
-			GetStructValue().
-			Fields["values"].
-			GetListValue().
-			Values
-		vector := make([]float32, len(values))
-		for j, value := range values {
-			vector[j] = float32(value.GetNumberValue())
-		}
+	spending := 0
+	for i, m := range resp.Embeddings {
 		e.Data = append(e.Data, openai.Embedding{
+			Object:    "embedding",
 			Index:     i,
-			Embedding: vector,
+			Embedding: m.Values,
 		})
+		spending += int(m.Statistics.TokenCount)
 	}
-	return
+	e.Usage = openai.Usage{
+		CompletionTokens: spending,
+		TotalTokens:      spending,
+	}
+	e.Object = "list"
+	return e, nil
 }
 
 func (v *Vertex) Complete(ctx context.Context, req openai.CompletionRequest) (c openai.CompletionResponse, err error) {
 	return c, simp.ErrNotImplemented
+}
+
+type vertexRequest struct {
+	Contents []*genai.Content
+	Config   *genai.GenerateContentConfig
+}
+
+func (v *Vertex) encode(ctx context.Context, req openai.ChatCompletionRequest) (*vertexRequest, error) {
+	var (
+		contents = []*genai.Content{}
+		config   = &genai.GenerateContentConfig{}
+	)
+	config.CandidateCount = int32(req.N)
+	for _, msg := range req.Messages {
+		role := ""
+		switch msg.Role {
+		case "system":
+			config.SystemInstruction = genai.NewContentFromText(msg.Content, genai.RoleUser)
+			continue
+		case "assistant":
+			role = "model"
+		case "user":
+			role = "user"
+		}
+		if msg.Content != "" {
+			contents = append(contents, genai.NewContentFromText(msg.Content, genai.Role(role)))
+		} else if len(msg.MultiContent) > 0 {
+			for _, content := range msg.MultiContent {
+				if content.ImageURL != nil && content.ImageURL.URL != "" {
+					gs, mime, err := v.fileUpload(ctx, content.ImageURL.URL)
+					if err != nil {
+						return nil, fmt.Errorf("cannot upload image: %w", err)
+					}
+					contents = append(contents, genai.NewContentFromURI(gs, mime, genai.RoleUser))
+				}
+				if content.Text != "" {
+					contents = append(contents, genai.NewContentFromText(content.Text, genai.RoleUser))
+				}
+			}
+		}
+	}
+
+	config.Temperature = &req.Temperature
+	config.TopP = &req.TopP
+	if req.MaxTokens > 0 {
+		config.MaxOutputTokens = int32(req.MaxTokens)
+	}
+	if len(req.Stop) > 0 {
+		config.StopSequences = req.Stop
+	}
+	config.PresencePenalty = &req.PresencePenalty
+	config.FrequencyPenalty = &req.FrequencyPenalty
+
+	if len(req.Tools) > 0 {
+		var tools []*genai.Tool
+		for _, t := range req.Tools {
+			switch t.Type {
+			case "function":
+				pre, err := json.Marshal(t.Function.Parameters)
+				if err != nil {
+					return nil, fmt.Errorf("cannot marshal function parameters: %w", err)
+				}
+				post := &genai.Schema{}
+				if err := json.Unmarshal(pre, post); err != nil {
+					return nil, fmt.Errorf("cannot unmarshal function parameters: %w", err)
+				}
+				tools = append(tools, &genai.Tool{
+					FunctionDeclarations: []*genai.FunctionDeclaration{
+						{
+							Name:        t.Function.Name,
+							Description: t.Function.Description,
+							Parameters:  post,
+						},
+					},
+				})
+			case "code_interpreter":
+				tools = append(tools, &genai.Tool{CodeExecution: &genai.ToolCodeExecution{}})
+			default:
+				return nil, fmt.Errorf("unsupported tool type: %s", t.Type)
+			}
+		}
+		if len(tools) > 0 {
+			config.Tools = tools
+		}
+	}
+
+	if cc, ok := req.Metadata["cached_content"]; ok {
+		config.CachedContent = cc
+	}
+
+	return &vertexRequest{
+		Contents: contents,
+		Config:   config,
+	}, nil
+}
+
+func (v *Vertex) decode(ret *genai.GenerateContentResponse) (openai.ChatCompletionResponse, error) {
+	var resp = openai.ChatCompletionResponse{
+		Object:  "chat.completion",
+		Created: ret.CreateTime.Unix(),
+		Model:   ret.ModelVersion,
+	}
+
+	for i, can := range ret.Candidates {
+		if can.Content == nil || len(can.Content.Parts) == 0 {
+			continue
+		}
+		var m = openai.ChatCompletionMessage{Role: "assistant"}
+
+		var mp []openai.ChatMessagePart
+		for _, part := range can.Content.Parts {
+			var typ openai.ChatMessagePartType = "text"
+			switch {
+			case part.Text != "":
+				if part.Thought {
+					typ = "thought"
+				}
+				mp = append(mp, openai.ChatMessagePart{Type: typ, Text: part.Text})
+			case part.ExecutableCode != nil:
+				c := part.ExecutableCode
+				t := fmt.Sprintf("```%s\n%s\n```", c.Language, c.Code)
+				mp = append(mp, openai.ChatMessagePart{Type: typ, Text: t})
+			case part.CodeExecutionResult != nil:
+				cr := part.CodeExecutionResult
+				if cr.Outcome == genai.OutcomeOK {
+					typ = "code"
+					mp = append(mp, openai.ChatMessagePart{Type: typ, Text: cr.Output})
+				}
+			case part.FunctionCall != nil:
+				c := part.FunctionCall
+				var b bytes.Buffer
+				if err := json.NewEncoder(&b).Encode(c.Args); err != nil {
+					return resp, fmt.Errorf("cannot marshal function arguments: %w", err)
+				}
+				m.ToolCalls = append(m.ToolCalls, openai.ToolCall{
+					ID:       c.ID,
+					Type:     "function",
+					Function: openai.FunctionCall{Name: c.Name, Arguments: b.String()},
+				})
+			}
+			if len(mp) == 1 {
+				for _, p := range mp {
+					if p.Type == "text" {
+						m.Content = p.Text
+						mp = nil
+					}
+				}
+			}
+			m.MultiContent = mp
+		}
+
+		finishReason := openai.FinishReasonStop
+		switch can.FinishReason {
+		case genai.FinishReasonMaxTokens:
+			finishReason = openai.FinishReasonLength
+		case genai.FinishReasonStop:
+			finishReason = openai.FinishReasonStop
+		case genai.FinishReasonSafety:
+			finishReason = openai.FinishReasonContentFilter
+		case genai.FinishReasonRecitation:
+			finishReason = openai.FinishReasonContentFilter
+		}
+
+		resp.Choices = append(resp.Choices, openai.ChatCompletionChoice{
+			Index:        i,
+			Message:      m,
+			FinishReason: finishReason,
+		})
+	}
+
+	if meta := ret.UsageMetadata; meta != nil {
+		resp.Usage = openai.Usage{
+			PromptTokens:     int(meta.PromptTokenCount),
+			CompletionTokens: int(meta.CandidatesTokenCount),
+			TotalTokens:      int(meta.TotalTokenCount),
+		}
+		if c := meta.CachedContentTokenCount; c > 0 {
+			resp.Usage.PromptTokensDetails = &openai.PromptTokensDetails{
+				CachedTokens: int(c),
+			}
+		}
+	}
+	return resp, nil
+}
+
+func (v *Vertex) accumulate(a, b openai.Usage) openai.Usage {
+	u := openai.Usage{
+		PromptTokens:     a.PromptTokens + b.PromptTokens,
+		CompletionTokens: a.CompletionTokens + b.CompletionTokens,
+		TotalTokens:      a.TotalTokens + b.TotalTokens,
+	}
+	if d := a.PromptTokensDetails; d != nil {
+		u.PromptTokensDetails = &openai.PromptTokensDetails{
+			AudioTokens:  d.AudioTokens,
+			CachedTokens: d.CachedTokens,
+		}
+	}
+	if d := a.CompletionTokensDetails; d != nil {
+		u.CompletionTokensDetails = &openai.CompletionTokensDetails{
+			AudioTokens:     d.AudioTokens,
+			ReasoningTokens: d.ReasoningTokens,
+		}
+	}
+	if d := b.PromptTokensDetails; d != nil {
+		d0 := u.PromptTokensDetails
+		d0.AudioTokens += d.AudioTokens
+		d0.CachedTokens += d.CachedTokens
+	}
+	if d := b.CompletionTokensDetails; d != nil {
+		d0 := u.CompletionTokensDetails
+		d0.AudioTokens += d.AudioTokens
+		d0.ReasoningTokens += d.ReasoningTokens
+	}
+	return u
 }
 
 func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c openai.ChatCompletionResponse, err error) {
@@ -134,116 +339,79 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	if err != nil {
 		return c, err
 	}
-
-	model := client.GenerativeModel(req.Model)
-	model.SetTemperature(req.Temperature)
-	if v := req.MaxTokens; v != 0 {
-		model.SetMaxOutputTokens(int32(v)) //nolint:gosec
+	p, err := v.encode(ctx, req)
+	if err != nil {
+		return c, err
 	}
-	if v := req.TopP; v != 0 {
-		model.TopP = &v
-	}
-	if v := req.FrequencyPenalty; v != 0 {
-		model.FrequencyPenalty = &v
-	}
-	if v := req.PresencePenalty; v != 0 {
-		model.PresencePenalty = &v
-	}
-	cs := model.StartChat()
-	h := []*genai.Content{}
-	for i, msg := range req.Messages {
-		role := msg.Role
-		switch role {
-		case "system":
-			if i != 0 {
-				return c, simp.ErrMisplacedSystem
-			}
-			model.SystemInstruction = &genai.Content{
-				Parts: []genai.Part{genai.Text(msg.Content)},
-			}
-		case "user":
-		case "assistant":
-			role = "model"
-		default:
-			return c, simp.ErrUnsupportedRole
-		}
-		if role == "system" {
-			continue
-		}
-		c := &genai.Content{
-			Role:  role,
-			Parts: []genai.Part{genai.Text(msg.Content)},
-		}
-		h = append(h, c)
-	}
-	if len(h) == 0 {
-		return c, fmt.Errorf("no messages to complete")
-	}
-	cs.History = h[:len(h)-1]
-	tail := h[len(h)-1].Parts
-	if !req.Stream {
-		defer client.Close()
-		resp, err := cs.SendMessage(ctx, tail...)
+	if ttl, ok := req.Metadata["cache_ttl"]; ok {
+		ttl, err := strconv.ParseInt(ttl, 10, 64)
 		if err != nil {
-			return c, err
+			return c, fmt.Errorf("cannot parse cache ttl: %w", err)
 		}
-		for _, can := range resp.Candidates {
-			c.Choices = append(c.Choices, openai.ChatCompletionChoice{
-				Message: openai.ChatCompletionMessage{
-					Role:    "assistant",
-					Content: fmt.Sprintf("%s", can.Content.Parts[0]),
-				},
-			})
+		cc, err := client.Caches.Create(ctx, v.googleModel(req.Model), &genai.CreateCachedContentConfig{
+			TTL:               time.Duration(ttl) * time.Second,
+			Contents:          p.Contents,
+			SystemInstruction: p.Config.SystemInstruction,
+			Tools:             p.Config.Tools,
+			ToolConfig:        p.Config.ToolConfig,
+		})
+		if err != nil {
+			return c, fmt.Errorf("cannot create cache: %w", err)
 		}
+		c.ID = cc.Name
 		c.Usage = openai.Usage{
-			PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
-			CompletionTokens: int(resp.UsageMetadata.CandidatesTokenCount),
-			TotalTokens:      int(resp.UsageMetadata.TotalTokenCount),
+			TotalTokens: int(cc.UsageMetadata.TotalTokenCount),
 		}
 		return c, nil
 	}
-	it := cs.SendMessageStream(ctx, tail...)
+	if !req.Stream {
+		resp, err := client.Models.GenerateContent(ctx, req.Model, p.Contents, p.Config)
+		if err != nil {
+			return c, fmt.Errorf("vertex GenerateContent failed: %w", err)
+		}
+		return v.decode(resp)
+	}
 	c.Stream = make(chan openai.ChatCompletionStreamResponse, 1)
 	go func() {
-		defer client.Close()
 		defer close(c.Stream)
 
-		var usage *openai.Usage
-		for {
-			chunk, err := it.Next()
-			switch err {
-			case nil:
-				choices := []openai.ChatCompletionStreamChoice{}
-				for _, can := range chunk.Candidates {
-					choices = append(choices, openai.ChatCompletionStreamChoice{
-						Delta: openai.ChatCompletionStreamChoiceDelta{
-							Content: fmt.Sprintf("%s", can.Content.Parts[0]),
-						},
-					})
-				}
-				c.Stream <- openai.ChatCompletionStreamResponse{Choices: choices}
-
-				if u := chunk.UsageMetadata; u != nil && u.TotalTokenCount > 0 {
-					usage = &openai.Usage{
-						PromptTokens:     int(u.PromptTokenCount),
-						CompletionTokens: int(u.CandidatesTokenCount),
-						TotalTokens:      int(u.TotalTokenCount),
-					}
-				}
-			case iterator.Done:
-				c.Stream <- openai.ChatCompletionStreamResponse{
-					Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "stop"}},
-				}
-				if so := req.StreamOptions; so != nil && so.IncludeUsage && usage != nil {
-					c.Stream <- openai.ChatCompletionStreamResponse{Usage: usage}
-				}
+		var total openai.Usage
+		for chunk, err := range client.Models.GenerateContentStream(ctx, req.Model, p.Contents, p.Config) {
+			if err != nil {
+				c.Stream <- openai.ChatCompletionStreamResponse{Error: err}
 				return
-			default:
-				c.Stream <- openai.ChatCompletionStreamResponse{
-					Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "error"}},
-					Error:   err,
-				}
 			}
+			resp, err := v.decode(chunk)
+			if err != nil {
+				c.Stream <- openai.ChatCompletionStreamResponse{Error: err}
+				return
+			}
+			total = v.accumulate(total, resp.Usage)
+
+			var choices []openai.ChatCompletionStreamChoice
+			for i, c := range resp.Choices {
+				choices = append(choices, openai.ChatCompletionStreamChoice{
+					Index: i,
+					Delta: openai.ChatCompletionStreamChoiceDelta{
+						Role:         c.Message.Role,
+						Content:      c.Message.Content,
+						FunctionCall: c.Message.FunctionCall,
+						ToolCalls:    c.Message.ToolCalls,
+						Refusal:      c.Message.Refusal,
+					},
+				})
+			}
+			c.Stream <- openai.ChatCompletionStreamResponse{
+				ID:      resp.ID,
+				Object:  resp.Object,
+				Created: resp.Created,
+				Model:   resp.Model,
+				Choices: choices,
+			}
+		}
+		c.Stream <- openai.ChatCompletionStreamResponse{Usage: &total}
+		c.Stream <- openai.ChatCompletionStreamResponse{
+			Choices: []openai.ChatCompletionStreamChoice{{FinishReason: "stop"}},
 		}
 	}()
 	return c, nil
@@ -252,6 +420,10 @@ func (v *Vertex) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []openai.BatchInput) error {
 	if !v.Batch {
 		return simp.ErrNotImplemented
+	}
+	modelName, ok := ctx.Value(simp.KeyModel).(config.Model)
+	if !ok {
+		return fmt.Errorf("model not found")
 	}
 
 	client, err := v.bigqueryClient(ctx)
@@ -265,25 +437,65 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		Request string `bigquery:"request"`
 	}
 	var (
-		table  = batch.ID
-		rows   = []vertexBatch{}
-		models = map[string]bool{}
+		table = batch.ID
+		rows  = []vertexBatch{}
 	)
-	for i, input := range inputs {
+	for _, input := range inputs {
 		if input.ChatCompletion == nil {
 			return fmt.Errorf("embeddings are not supported")
 		}
-		models[input.ChatCompletion.Model] = true
-		if len(models) > 1 {
-			return fmt.Errorf("all completions must use the same model")
-		}
-		req, err := v.marshal(ctx, input.ChatCompletion)
+		sect, err := v.encode(ctx, *input.ChatCompletion)
 		if err != nil {
-			return fmt.Errorf("message/%d could not be marshaled: %w", i, err)
+			return fmt.Errorf("cannot encode request: %w", err)
+		}
+		contents, config := sect.Contents, sect.Config
+		// Build the request map with only non-nil values
+		req := map[string]any{
+			"model":    v.googleModel(modelName.Name),
+			"contents": contents,
+		}
+		if config.SystemInstruction != nil {
+			req["system_instruction"] = config.SystemInstruction
+		}
+		if config.CachedContent != "" {
+			req["cached_content"] = config.CachedContent
+		}
+		if len(config.Tools) > 0 {
+			req["tools"] = config.Tools
+		}
+		if config.ToolConfig != nil {
+			req["tool_config"] = config.ToolConfig
+		}
+		genConfig := map[string]any{}
+		if config.Temperature != nil {
+			genConfig["temperature"] = *config.Temperature
+		}
+		if config.TopP != nil {
+			genConfig["top_p"] = *config.TopP
+		}
+		if config.MaxOutputTokens > 0 {
+			genConfig["max_output_tokens"] = config.MaxOutputTokens
+		}
+		if len(config.StopSequences) > 0 {
+			genConfig["stop_sequences"] = config.StopSequences
+		}
+		if config.PresencePenalty != nil {
+			genConfig["presence_penalty"] = *config.PresencePenalty
+		}
+		if config.FrequencyPenalty != nil {
+			genConfig["frequency_penalty"] = *config.FrequencyPenalty
+		}
+		if len(genConfig) > 0 {
+			req["generation_config"] = genConfig
+		}
+
+		b, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("cannot marshal request: %w", err)
 		}
 		rows = append(rows, vertexBatch{
 			ID:      input.CustomID,
-			Request: req,
+			Request: string(b),
 		})
 	}
 	err = client.
@@ -304,7 +516,7 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		Table(table).
 		Inserter()
 
-	const chunkSize = 1000
+	const chunkSize = 200
 	for input := 0; input < len(rows); input += chunkSize {
 		end := input + chunkSize
 		if end > len(rows) {
@@ -320,6 +532,12 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 	return nil
 }
 
+func (v *Vertex) googleModel(m string) string {
+	return fmt.Sprintf("publishers/google/models/%s", m)
+	// return fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s",
+	// 	v.Project, v.Region, m)
+}
+
 func (v *Vertex) BatchSend(ctx context.Context, batch *openai.Batch) error {
 	m, ok := ctx.Value(simp.KeyModel).(config.Model)
 	if !ok {
@@ -330,33 +548,6 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *openai.Batch) error {
 		return err
 	}
 	defer client.Close()
-
-	p := map[string]any{}
-	if v := m.MaxTokens; v != 0 {
-		p["maxOutputTokens"] = v
-	}
-	if v := m.Temperature; v != nil {
-		p["temperature"] = *v
-	}
-	if v := m.TopP; v != nil {
-		p["topP"] = *v
-	}
-	if v := m.FrequencyPenalty; v != nil {
-		p["frequencyPenalty"] = *v
-	}
-	if v := m.PresencePenalty; v != nil {
-		p["presencePenalty"] = *v
-	}
-	if v := m.Seed; v != nil {
-		p["seed"] = *v
-	}
-	if v := m.Stop; len(v) > 0 {
-		p["stopSequences"] = v
-	}
-	params, err := structpb.NewValue(p)
-	if err != nil {
-		return fmt.Errorf("cannot marshal model parameters: %w", err)
-	}
 
 	ifd := batch.InputFileID
 
@@ -373,9 +564,8 @@ func (v *Vertex) BatchSend(ctx context.Context, batch *openai.Batch) error {
 	req := aipb.CreateBatchPredictionJobRequest{
 		Parent: fmt.Sprintf("projects/%s/locations/%s", v.Project, v.Region),
 		BatchPredictionJob: &aipb.BatchPredictionJob{
-			DisplayName:     ifd,
-			ModelParameters: params,
-			Model:           "publishers/google/models/" + m.Name,
+			DisplayName: ifd,
+			Model:       v.googleModel(m.Name),
 			InputConfig: &aipb.BatchPredictionJob_InputConfig{
 				Source: &aipb.BatchPredictionJob_InputConfig_BigquerySource{
 					BigquerySource: &aipb.BigQuerySource{InputUri: input},
@@ -423,23 +613,6 @@ func (v *Vertex) BatchRefresh(ctx context.Context, batch *openai.Batch) error {
 	return nil
 }
 
-// VertexP is a message content part.
-type VertexP struct {
-	Text string   `json:"text,omitempty"`
-	File *VertexF `json:"fileData,omitempty"`
-}
-
-type VertexF struct {
-	FileUri  string `json:"fileUri,omitempty"`
-	MimeType string `json:"mimeType,omitempty"`
-}
-
-// VertexC is a message content.
-type VertexC struct {
-	Role  string    `json:"role,omitempty"`
-	Parts []VertexP `json:"parts"`
-}
-
 func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs []openai.BatchOutput, err error) {
 	client, err := v.bigqueryClient(ctx)
 	if err != nil {
@@ -452,22 +625,6 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 			Dataset(v.Dataset).
 			Table(batch.InputFileID).
 			Delete(ctx)
-	}
-
-	type Candidates struct {
-		AvgLogprobs  float64 `json:"avgLogprobs"`
-		Content      VertexC `json:"content"`
-		FinishReason string  `json:"finishReason"`
-	}
-	type Usage struct {
-		CandidatesTokenCount int `json:"candidatesTokenCount"`
-		PromptTokenCount     int `json:"promptTokenCount"`
-		TotalTokenCount      int `json:"totalTokenCount"`
-	}
-	type Response struct {
-		Candidates    []Candidates `json:"candidates"`
-		ModelVersion  string       `json:"modelVersion"`
-		UsageMetadata Usage        `json:"usageMetadata"`
 	}
 	table := "predict-" + batch.InputFileID
 	it := client.
@@ -482,7 +639,7 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 		err := it.Next(&row)
 		switch err {
 		case nil:
-			if row.Response == "" {
+			if len(row.Response) == 0 {
 				continue
 			}
 		case iterator.Done:
@@ -490,36 +647,18 @@ func (v *Vertex) BatchReceive(ctx context.Context, batch *openai.Batch) (outputs
 		default:
 			return nil, fmt.Errorf("cannot read from table %q: %w", table, err)
 		}
-		var resp Response
+		var resp genai.GenerateContentResponse
 		if err := json.Unmarshal([]byte(row.Response), &resp); err != nil {
 			return nil, fmt.Errorf("cannot unmarshal response/%s: %w", row.ID, err)
 		}
-		output := &openai.ChatCompletionResponse{ID: row.ID}
-		for _, can := range resp.Candidates {
-			s := ""
-			if parts := can.Content.Parts; len(parts) != 0 {
-				s = parts[0].Text
-			}
-			c := openai.ChatCompletionChoice{
-				Message: openai.ChatCompletionMessage{
-					Role:    "assistant",
-					Content: s,
-				},
-				LogProbs: &openai.LogProbs{
-					Content: []openai.LogProb{{Token: "average", LogProb: can.AvgLogprobs}},
-				},
-				FinishReason: openai.FinishReason(can.FinishReason),
-			}
-			output.Choices = append(output.Choices, c)
+		output, err := v.decode(&resp)
+		if err != nil {
+			return nil, fmt.Errorf("cannot decode response/%s: %w", row.ID, err)
 		}
-		output.Usage = openai.Usage{
-			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount,
-			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
-		}
+		output.ID = row.ID
 		outputs = append(outputs, openai.BatchOutput{
 			CustomID:       row.ID,
-			ChatCompletion: output,
+			ChatCompletion: &output,
 		})
 	}
 }
@@ -536,63 +675,6 @@ func (v *Vertex) BatchCancel(ctx context.Context, batch *openai.Batch) error {
 	}
 	req := &aipb.CancelBatchPredictionJobRequest{Name: jobName}
 	return client.CancelBatchPredictionJob(ctx, req)
-}
-
-func (v *Vertex) marshal(ctx context.Context, a *openai.ChatCompletionRequest) (string, error) {
-	req := map[string]any{}
-	contents := make([]VertexC, 0, len(a.Messages))
-	for i, msg := range a.Messages {
-		var (
-			c    VertexC
-			role = msg.Role
-			mp   = msg.MultiContent
-		)
-		if len(mp) == 0 {
-			if msg.Content == "" {
-				return "", fmt.Errorf("empty message/%d", i)
-			}
-			mp = append(mp, openai.ChatMessagePart{Type: "text", Text: msg.Content})
-		}
-		for j, p := range mp {
-			switch p.Type {
-			case openai.ChatMessagePartTypeText:
-				c.Parts = append(c.Parts, VertexP{Text: p.Text})
-			case openai.ChatMessagePartTypeImageURL:
-				if p.ImageURL == nil || p.ImageURL.URL == "" {
-					return "", fmt.Errorf("no fileUri present in message/%d part/%d", i, j)
-				}
-				gs, mime, err := v.fileUpload(ctx, p.ImageURL.URL)
-				if err != nil {
-					return "", fmt.Errorf("upload message/%d part/%d: %w", i, j, err)
-				}
-				c.Parts = append(c.Parts, VertexP{File: &VertexF{FileUri: gs, MimeType: mime}})
-			default:
-				return "", fmt.Errorf("message/%d part/%d: %w", i, j, simp.ErrUnsupportedInput)
-			}
-		}
-		switch role {
-		case "system":
-			if i != 0 {
-				return "", fmt.Errorf("message/%d: %w", i, simp.ErrMisplacedSystem)
-			}
-			req["system_instruction"] = c
-			continue
-		case "user":
-		case "assistant":
-			role = "model"
-		default:
-			return "", fmt.Errorf("message/%d: %w", i, simp.ErrUnsupportedRole)
-		}
-		c.Role = role
-		contents = append(contents, c)
-	}
-	req["contents"] = contents
-
-	b, err := json.Marshal(req)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 func (v *Vertex) fileUpload(ctx context.Context, fileUri string) (gs, mime string, ret error) {
@@ -687,22 +769,25 @@ func (v *Vertex) updateStatus(batch *openai.Batch, state aipb.JobState) {
 }
 
 func (v *Vertex) genaiClient(ctx context.Context) (*genai.Client, error) {
-	client, err := genai.NewClient(ctx,
-		v.Project,
-		v.Region,
-		option.WithCredentialsJSON([]byte(v.APIKey)))
+	creds, err := google.CredentialsFromJSON(ctx, []byte(v.APIKey), "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
-		return nil, fmt.Errorf("cannot make client: %w", err)
+		return nil, fmt.Errorf("unable to parse credentials file: %w", err)
 	}
-	return client, nil
-}
-
-func (v *Vertex) predictionClient(ctx context.Context) (*aipl.PredictionClient, error) {
-	client, err := aipl.NewPredictionClient(ctx,
-		option.WithEndpoint(v.Region+"-aiplatform.googleapis.com:443"),
-		v.credentials())
+	httpClient := oauth2.NewClient(ctx, creds.TokenSource)
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		Backend:  genai.BackendVertexAI,
+		Project:  v.Project,
+		Location: v.Region,
+		Credentials: auth.NewCredentials(&auth.CredentialsOptions{
+			JSON: []byte(v.APIKey),
+		}),
+		HTTPClient: httpClient,
+		HTTPOptions: genai.HTTPOptions{
+			APIVersion: "v1beta1",
+		},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("cannot make client: %w", err)
+		return nil, fmt.Errorf("cannot make genai client: %w", err)
 	}
 	return client, nil
 }

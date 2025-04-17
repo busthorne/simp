@@ -62,18 +62,8 @@ linters:
   - err113
   # requires basically vetting every single dependency?
   - depguard
-  # deprecated linters:
-  - deadcode
-  - exhaustivestruct
-  - golint
-  - ifshort
-  - interfacer
-  - maligned
-  - gomnd
-  - nosnakecase
-  - scopelint
-  - structcheck
-  - varcheck
+  # gosec is too much trouble for all this int to int32 circus
+  - gosec
 
 severity:
   default-severity: error

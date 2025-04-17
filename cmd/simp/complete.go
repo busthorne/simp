@@ -72,10 +72,10 @@ func promptComplete() error {
 		Stream:           !*nos,
 		Model:            m.Name,
 		Messages:         cable.Messages(),
-		Temperature:      coalesce32(temperature, m.Temperature, cfg.Default.Temperature),
-		TopP:             coalesce32(topP, m.TopP, cfg.Default.TopP),
-		FrequencyPenalty: coalesce32(frequencyPenalty, m.FrequencyPenalty, cfg.Default.FrequencyPenalty),
-		PresencePenalty:  coalesce32(presencePenalty, m.PresencePenalty, cfg.Default.PresencePenalty),
+		Temperature:      coalesce(temperature, m.Temperature, cfg.Default.Temperature),
+		TopP:             coalesce(topP, m.TopP, cfg.Default.TopP),
+		FrequencyPenalty: coalesce(frequencyPenalty, m.FrequencyPenalty, cfg.Default.FrequencyPenalty),
+		PresencePenalty:  coalesce(presencePenalty, m.PresencePenalty, cfg.Default.PresencePenalty),
 		StreamOptions:    so,
 	})
 	if err != nil {
