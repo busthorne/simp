@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"os"
 
 	"filippo.io/xaes256gcm"
 	"github.com/busthorne/keyring"
@@ -38,22 +37,6 @@ func NewKeyring(auth config.Auth, provider *config.Provider) (keyring.Keyring, e
 		r.namespace = namespace
 		return &r, nil
 	}
-
-	// only for testing
-	if b64 := os.Getenv("MASTER_KEY"); b64 != "" {
-		secret, err := base64.StdEncoding.DecodeString(b64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode master key: %w", err)
-		}
-		aead, err := xaes256gcm.NewWithManualNonces(secret)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create aead: %w", err)
-		}
-		k := Keyring{auth.Name, namespace, aead}
-		rings[auth.Name] = k
-		return &k, nil
-	}
-
 	ring, err := keyring.Open(keyring.Config{
 		AllowedBackends:                []keyring.BackendType{keyring.BackendType(auth.Backend)},
 		ServiceName:                    "simp",

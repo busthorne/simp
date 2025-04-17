@@ -173,22 +173,15 @@ eof:
 			parent = super
 			bd, ok = drivers[model]
 		)
+		const chunkSize = 25000
 		if ok {
-			splits := [][]openai.BatchInput{}
-
-			const approxBreakpoint = 2 << 21
-			i, running := 0, 0
-			for j, req := range inputs {
-				approx := req.Approx()
-				if running+approx > approxBreakpoint {
-					splits = append(splits, inputs[i:j])
-					i = j
-					running = 0
+			splits := make([][]openai.BatchInput, 0, len(inputs)/chunkSize+1)
+			for i := 0; i < len(inputs); i += chunkSize {
+				end := i + chunkSize
+				if end > len(inputs) {
+					end = len(inputs)
 				}
-				running += approx
-			}
-			if i != len(inputs) {
-				splits = append(splits, inputs[i:])
+				splits = append(splits, inputs[i:end])
 			}
 			for _, inputs := range splits {
 				log.Debugf("batch %q split length %d\n", super.ID, len(inputs))

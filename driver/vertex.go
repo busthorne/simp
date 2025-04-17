@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -47,16 +48,19 @@ type Vertex struct {
 }
 
 func (v *Vertex) List(ctx context.Context) ([]openai.Model, error) {
-	// Vertex AI doesn't have a direct model listing API
-	// Return predefined list of available models
-	return []openai.Model{
-		{ID: "gemini-1.5-flash-001"},
-		{ID: "gemini-1.5-flash-002"},
-		{ID: "gemini-1.5-pro-001"},
-		{ID: "gemini-1.5-pro-002"},
-		{ID: "gemini-flash-experimental"},
-		{ID: "gemini-pro-experimental"},
-	}, nil
+	client, err := v.genaiClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models := []openai.Model{}
+
+	for m, err := range client.Models.All(ctx) {
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, openai.Model{ID: m.Name})
+	}
+	return models, nil
 }
 
 func (v *Vertex) Embed(ctx context.Context, req openai.EmbeddingRequest) (e openai.EmbeddingResponse, ret error) {
@@ -223,19 +227,46 @@ func (v *Vertex) decode(ctx context.Context, ret *genai.GenerateContentResponse)
 		}
 		var m = openai.ChatCompletionMessage{Role: "assistant"}
 
+		var mp []openai.ChatMessagePart
 		for _, part := range can.Content.Parts {
-			if part.Text != "" {
-				m.Content = part.Text
-			}
-			if cr := part.CodeExecutionResult; cr != nil {
+			var typ openai.ChatMessagePartType = "text"
+			switch {
+			case part.Text != "":
+				if part.Thought {
+					typ = "thought"
+				}
+				mp = append(mp, openai.ChatMessagePart{Type: typ, Text: part.Text})
+			case part.ExecutableCode != nil:
+				c := part.ExecutableCode
+				t := fmt.Sprintf("```%s\n%s\n```", c.Language, c.Code)
+				mp = append(mp, openai.ChatMessagePart{Type: typ, Text: t})
+			case part.CodeExecutionResult != nil:
+				cr := part.CodeExecutionResult
 				if cr.Outcome == genai.OutcomeOK {
-					m.MultiContent = []openai.ChatMessagePart{
-						{Type: "text", Text: m.Content},
-						{Type: "code", Text: cr.Output},
+					typ = "code"
+					mp = append(mp, openai.ChatMessagePart{Type: typ, Text: cr.Output})
+				}
+			case part.FunctionCall != nil:
+				c := part.FunctionCall
+				var b bytes.Buffer
+				if err := json.NewEncoder(&b).Encode(c.Args); err != nil {
+					return resp, fmt.Errorf("cannot marshal function arguments: %w", err)
+				}
+				m.ToolCalls = append(m.ToolCalls, openai.ToolCall{
+					ID:       c.ID,
+					Type:     "function",
+					Function: openai.FunctionCall{Name: c.Name, Arguments: b.String()},
+				})
+			}
+			if len(mp) == 1 {
+				for _, p := range mp {
+					if p.Type == "text" {
+						m.Content = p.Text
+						mp = nil
 					}
-					m.Content = ""
 				}
 			}
+			m.MultiContent = mp
 		}
 
 		finishReason := openai.FinishReasonStop
@@ -485,7 +516,7 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		Table(table).
 		Inserter()
 
-	const chunkSize = 1000
+	const chunkSize = 200
 	for input := 0; input < len(rows); input += chunkSize {
 		end := input + chunkSize
 		if end > len(rows) {
