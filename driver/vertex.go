@@ -47,6 +47,14 @@ type Vertex struct {
 	uploads map[string]string
 }
 
+func (v *Vertex) region(ctx context.Context) string {
+	m, ok := ctx.Value(simp.KeyModel).(config.Model)
+	if !ok || m.Region == "" {
+		return v.Region
+	}
+	return m.Region
+}
+
 func (v *Vertex) List(ctx context.Context) ([]openai.Model, error) {
 	client, err := v.genaiClient(ctx)
 	if err != nil {
@@ -421,9 +429,12 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 	if !v.Batch {
 		return simp.ErrNotImplemented
 	}
-	modelName, ok := ctx.Value(simp.KeyModel).(config.Model)
+	model, ok := ctx.Value(simp.KeyModel).(config.Model)
 	if !ok {
 		return fmt.Errorf("model not found")
+	}
+	if !model.Batch {
+		return fmt.Errorf("model %q does not support batching", model.Name)
 	}
 
 	client, err := v.bigqueryClient(ctx)
@@ -451,7 +462,7 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		contents, config := sect.Contents, sect.Config
 		// Build the request map with only non-nil values
 		req := map[string]any{
-			"model":    v.googleModel(modelName.Name),
+			"model":    v.googleModel(model.Name),
 			"contents": contents,
 		}
 		if config.SystemInstruction != nil {
@@ -524,6 +535,7 @@ func (v *Vertex) BatchUpload(ctx context.Context, batch *openai.Batch, inputs []
 		}
 		chunk := rows[input:end]
 
+		fmt.Println("inserting chunk", len(chunk), "into", v.Dataset, table)
 		if err := inserter.Put(ctx, chunk); err != nil {
 			return fmt.Errorf("failed to insert batch chunk: %w", err)
 		}
@@ -777,7 +789,7 @@ func (v *Vertex) genaiClient(ctx context.Context) (*genai.Client, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		Backend:  genai.BackendVertexAI,
 		Project:  v.Project,
-		Location: v.Region,
+		Location: v.region(ctx),
 		Credentials: auth.NewCredentials(&auth.CredentialsOptions{
 			JSON: []byte(v.APIKey),
 		}),
@@ -794,7 +806,7 @@ func (v *Vertex) genaiClient(ctx context.Context) (*genai.Client, error) {
 
 func (v *Vertex) jobClient(ctx context.Context) (*aipl.JobClient, error) {
 	client, err := aipl.NewJobClient(ctx,
-		option.WithEndpoint(v.Region+"-aiplatform.googleapis.com:443"),
+		option.WithEndpoint(v.region(ctx)+"-aiplatform.googleapis.com:443"),
 		v.credentials())
 	if err != nil {
 		return nil, fmt.Errorf("cannot make job client: %w", err)

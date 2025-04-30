@@ -180,7 +180,10 @@ type Model struct {
 	Embedding     bool     `hcl:"embedding,optional"`
 	Images        bool     `hcl:"images,optional"`
 	Videos        bool     `hcl:"videos,optional"`
-	Reasoning     bool     `hcl:"reasoning,optional"`
+	Thinking      bool     `hcl:"thinking,optional"`
+	Batch         bool     `hcl:"batch,optional"`
+	// Region is relevant for providers with inconsistent availability.
+	Region string `hcl:"region,optional"`
 
 	ModelDefault
 }
