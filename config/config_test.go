@@ -39,7 +39,7 @@ func TestParsePath(t *testing.T) {
 				Name:   "api",
 				Models: []Model{
 					{Name: "gpt-4o", Alias: list{"4o"}},
-					{Name: "o3-mini", Alias: list{"o3"}, Reasoning: true},
+					{Name: "o3-mini", Alias: list{"o3"}, Thinking: true},
 				},
 			},
 			{
