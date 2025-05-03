@@ -139,6 +139,17 @@ func (v *Vertex) encode(ctx context.Context, req openai.ChatCompletionRequest) (
 		config   = &genai.GenerateContentConfig{}
 	)
 	config.CandidateCount = int32(req.N)
+
+	if rf := req.ResponseFormat; rf != nil {
+		if rf.JSONSchema == nil {
+			return nil, fmt.Errorf("json schema not provided")
+		}
+		if err := json.Unmarshal(rf.JSONSchema, &config.ResponseSchema); err != nil {
+			return nil, fmt.Errorf("cannot unmarshal json schema: %w", err)
+		}
+		config.ResponseMIMEType = "application/json"
+	}
+
 	for _, msg := range req.Messages {
 		role := ""
 		switch msg.Role {

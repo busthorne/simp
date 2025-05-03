@@ -8,6 +8,7 @@ replace github.com/sashabaranov/go-openai => ./go-openai
 
 require (
 	cloud.google.com/go/aiplatform v1.74.0
+	cloud.google.com/go/auth v0.16.0
 	cloud.google.com/go/bigquery v1.66.2
 	cloud.google.com/go/storage v1.50.0
 	filippo.io/xaes256gcm v0.1.0
@@ -34,7 +35,6 @@ require (
 	cel.dev/expr v0.19.2 // indirect
 	cloud.google.com/go v0.120.0 // indirect
 	cloud.google.com/go/ai v0.10.1 // indirect
-	cloud.google.com/go/auth v0.16.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
 	cloud.google.com/go/iam v1.4.0 // indirect
