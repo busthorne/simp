@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -96,8 +97,13 @@ func (g *Gemini) Chat(ctx context.Context, req openai.ChatCompletionRequest) (c 
 	}
 	model := client.GenerativeModel(req.Model)
 	model.SetTemperature(req.Temperature)
-	if scm := req.ResponseFormat.JSONSchema; scm != nil {
-		return c, fmt.Errorf("json schema for gemini is hell")
+	if rf := req.ResponseFormat; rf != nil {
+		if scm := rf.JSONSchema; scm != nil {
+			if err := json.Unmarshal(scm, &model.ResponseSchema); err != nil {
+				return c, fmt.Errorf("cannot unmarshal json schema: %w", err)
+			}
+			model.ResponseMIMEType = "application/json"
+		}
 	}
 	if v := req.MaxTokens; v != 0 {
 		model.SetMaxOutputTokens(int32(v)) //nolint:gosec
